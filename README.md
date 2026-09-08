@@ -41,78 +41,96 @@ automatically. Nothing else to do.
 
 The default election seeds itself on first use in production too.
 
-## How a game runs
+## Election
 
-1. **Create a group** (`/create`) — name, your name, optional password, prediction
-   deadline, reveal settings. You become the group **admin** (an admin token is
-   stored in your browser cookie for that group).
-2. **Share** the group code / invite link. Friends **join** (`/join`) with just a
-   display name.
-3. Everyone fills the **prediction form** (`/g/<code>/predict`): distribute exactly
-   120 seats (live counter enforces it) + answer bonus questions. Drafts can be
-   saved anytime; predictions are editable until the deadline.
-4. At the deadline (or when the admin locks early) predictions **lock**. If enabled,
-   a **comparison table** (`/g/<code>/compare`) opens.
-5. The admin opens **ניהול → תוצאות רשמיות** (`/g/<code>/admin`), enters the official
-   seat counts and any manual answers, and hits **publish**.
-6. The **leaderboard** appears on the group dashboard with full score breakdown and
-   highlights (1st place, most accurate, most exact).
+26th Knesset — **27 October 2026**. Candidate lists closed 8 Sep 2026. The seeded
+party list (`src/lib/seedData.ts`) is a best-effort snapshot; ballot letters and
+final rosters were still firming up, so **the group admin edits lists in
+`ניהול → רשימות`** (name, ballot letters, leader, colour, bloc, active/withdrawn/
+disqualified).
 
-## Scoring (configurable per group, `ניהול → שיטת ניקוד`)
+## Game lifecycle
 
-**Seats** — per party, by absolute error:
+`open → locked → provisional (election night) → final`
+
+1. **Create a group** (`/create`) — name, deadline, reveal setting. Creator becomes
+   admin (cookie token).
+2. Friends **join** (`/join`) with a display name. No accounts.
+3. **Prediction form** (`/g/<code>/predict`): a live 120-seat Knesset arc; per-list
+   +/- and direct entry; **0 seats = an explicit "won't cross the threshold"
+   call**; one **⭐ Confidence Pick**; bonus questions; turnout tie-breaker; the
+   admin's optional 🎲 Wild Prediction. Drafts autosave a version history;
+   editable until the deadline.
+4. **Predictions are never visible to others before lock.** At the deadline (or
+   manual lock) → **Reveal Mode**: comparison table, **head-to-head**, and **The
+   Group Forecast** (average map, largest-remainder-rounded to 120).
+5. **Election Night** (`ניהול → תוצאות`): admin enters/updates seats and publishes
+   **provisional** results — leaderboard recomputes live under "אם אלו התוצאות
+   הסופיות…". Then **mark final** → final leaderboard + awards.
+
+## Scoring (`ניהול → שיטת ניקוד`, fully configurable)
+
+Per list that **entered** the Knesset, by |error|:
 
 | error | 0  | 1 | 2 | 3 | 4 | 5+ |
 |-------|----|---|---|---|---|----|
 | pts   | 10 | 7 | 5 | 3 | 1 | 0  |
 
-Plus optional per-party *exact* bonus and *passed-threshold* points. A `linear`
-method (`points = base − slope·error`) is also available.
+Plus: **threshold bonus** (+2 correct "enters", +2 correct "fails"); a
+**per-seat penalty** for seats piled on a list that got 0 (predicting 7→0 hurts
+more than 1→0); optional exact bonus; `linear` alternative.
+**Confidence Pick**: +10 if that list's seat count is exact.
+**Bonus questions + Wild**: own point values; some auto-resolve from the seat
+results (largest party, bloc winner, list count, any-list-failed).
 
-**Bonus questions** — each has its own point value. Some resolve automatically from
-the seat results (largest party, winning bloc, party count, any-party-below-
-threshold); the rest (PM, government within 45 days) are entered by the admin.
+Headline metric: **Total Seat Error** = Σ|predicted − actual|. Also tracked:
+avg error, exact count, off-by-1 count, threshold accuracy.
 
-The scoring engine (`src/lib/scoring.ts`) is pure and strategy-based, so new
-methods can be added without touching the rest of the app.
+**Awards** (final only): 🔮 The Oracle, 🎯 Bullseye, 🗺️ Closest Knesset,
+🚪 Threshold Master, 🧠 Contrarian Genius, 🙈 Biggest Miss.
+
+The engine (`src/lib/scoring.ts`) is pure and config-driven.
 
 ## Project layout
 
 ```
 src/
-  models/            Mongoose schemas — Election, Party, Group, Participant,
-                     Prediction, OfficialResult (one concern per file)
+  models/            Election · Party · Group · Participant · Prediction ·
+                     PredictionVersion · OfficialResult (one concern per file)
   lib/
     db.ts            connection + embedded-Mongo fallback
-    seedData.ts      the default election + party list (data, not logic)
-    questionTemplates.ts  default bonus questions
-    scoring.ts       pure scoring engine (no DB / framework imports)
-    data.ts          service layer — all business logic, returns plain JSON
+    seedData.ts      the 26th-Knesset election + party list (data, not logic)
+    questionTemplates.ts  default bonus questions (incl. turnout tie-breaker)
+    scoring.ts       pure scoring engine — seats, threshold, confidence, wild
+    data.ts          service layer — business logic, group forecast, awards
     serialize.ts     Mongoose docs -> client-safe shapes
     session.ts       cookie-based identity (no accounts)
     types.ts         shared client/server types
   app/
-    actions.ts       Server Actions (create/join/save/lock/results/…)
+    actions.ts       Server Actions
     page.tsx         landing + countdown + scoring preview
     create/ join/    group creation & joining
-    g/[code]/        dashboard
-    g/[code]/predict     120-seat prediction form
-    g/[code]/admin       lock · questions · scoring · results entry
-    g/[code]/compare     everyone's predictions side by side
-  components/        Countdown, InviteBox, SeatBars, Leaderboard
+    g/[code]/            dashboard (status, leaderboard, group forecast, reveal)
+    g/[code]/predict     Knesset-arc 120-seat form + confidence pick + wild
+    g/[code]/admin       status/deadline · parties · questions+wild · scoring · results/election-night
+    g/[code]/compare     full table + head-to-head
+  components/        KnessetArc · Countdown · InviteBox · SeatBars · Leaderboard
 ```
 
-## Multi-election ready
+## Data architecture
 
-Elections, parties, questions, scoring and results are all separate concerns keyed
-by an `Election`. The current build assumes one "default election"; supporting
-several is a matter of adding more seed entries and a picker — no schema changes.
+Election → Parties / Questions / Wild → Groups → Participants → Predictions →
+PredictionVersions, plus per-group OfficialResult (`stage: provisional | final`,
+turnout). Scores and awards are computed on read. Nothing is keyed by a
+hard-coded party name — a future election is another `Election` row + seed entry.
 
 ## Not built yet (next steps)
 
-- Second-participant testing needs separate browsers (cookie identity) — a
-  magic-link re-entry flow would help.
-- Party logo upload (schema field `logoUrl` exists, no UI).
-- Recompute-on-demand button after changing scoring post-publish (currently
+- **Verify the party list** against the Central Elections Committee and add ballot
+  letters in `ניהול → רשימות` — the seed is a best-effort snapshot.
+- Shareable prediction / results cards (WhatsApp) — data is all present.
+- Group Insights panel (biggest agreement/disagreement, most optimistic…).
+- Explicit "recompute" button after changing scoring post-publish (currently
   recomputes on next page load).
-- Email/push notifications for deadline reminders.
+- Magic-link re-entry so a cleared cookie doesn't lose your spot.
+- Party logo upload (`logoUrl` field exists, no UI).

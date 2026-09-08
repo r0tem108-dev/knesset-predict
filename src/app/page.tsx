@@ -41,8 +41,7 @@ export default async function HomePage() {
         <div className="border-t border-line bg-brand-50/50 p-7 sm:p-10">
           <Countdown target={election.electionDay} />
           <p className="mt-3 text-xs text-muted">
-            תאריך משוער ({new Date(election.electionDay).toLocaleDateString("he-IL")}) — ניתן
-            לעדכן לכשייקבע מועד רשמי.
+            יום הבחירות: {new Date(election.electionDay).toLocaleDateString("he-IL", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jerusalem" })}
           </p>
         </div>
       </section>
@@ -84,8 +83,10 @@ export default async function HomePage() {
           ))}
         </div>
         <p className="mt-4 text-sm text-muted">
-          בנוסף: שאלות בונוס (מפלגה גדולה, ראש ממשלה, גוש מנצח, אחוז חסימה, הקמת ממשלה תוך{" "}
-          {election.coalitionWindowDays} יום ועוד) עם ניקוד נפרד לכל שאלה.
+          בנוסף: בונוס על ניחוש נכון של אחוז החסימה לכל רשימה, <b>ניחוש ביטחון</b> אחד (⭐)
+          שנותן בונוס גדול בפגיעה מדויקת, שאלות בונוס (מפלגה גדולה, ראש ממשלה, גוש מנצח, הקמת
+          ממשלה תוך {election.coalitionWindowDays} יום, אחוז הצבעה ועוד) ו<b>ניחוש פראי</b> של
+          מנהל הקבוצה. המדד המרכזי: <b>טעות המנדטים הכוללת</b> — מי בנה את מפת הכנסת הקרובה ביותר.
         </p>
       </section>
     </div>

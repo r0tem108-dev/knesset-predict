@@ -44,11 +44,12 @@ export default function KnessetArc({
   }
 
   const w = size;
-  const h = size / 2 + 14;
+  const h = size / 2 + 34;
   const cx = w / 2;
-  const cy = h - 6;
+  const cy = size / 2 + 2;
   const rOuter = w / 2 - 6;
-  const rInner = rOuter * 0.45;
+  const rInner = rOuter * 0.42;
+  const rnd = (n: number) => Math.round(n * 100) / 100;
   const dots: { x: number; y: number; c: string }[] = [];
   let idx = 0;
   for (let r = 0; r < rows; r++) {
@@ -58,24 +59,25 @@ export default function KnessetArc({
       const t = count === 1 ? 0.5 : i / (count - 1);
       const angle = Math.PI - t * Math.PI; // 180°→0°
       dots.push({
-        x: cx + radius * Math.cos(angle),
-        y: cy - radius * Math.sin(angle),
+        x: rnd(cx + radius * Math.cos(angle)),
+        y: rnd(cy - radius * Math.sin(angle)),
         c: seatColors[idx] ?? "var(--color-line)",
       });
       idx++;
     }
   }
 
-  const dotR = Math.max(3, w / 70);
+  const dotR = rnd(Math.max(3, w / 70));
 
   return (
+    <div style={{ maxWidth: size, margin: "0 auto" }}>
     <svg viewBox={`0 0 ${w} ${h}`} className="w-full" role="img" aria-label="חלוקת מנדטים">
       {showMajority && (
         <line
           x1={cx}
-          y1={cy - rOuter - 4}
+          y1={rnd(cy - rOuter - 4)}
           x2={cx}
-          y2={cy - rInner + 6}
+          y2={rnd(cy - rInner + 6)}
           stroke="var(--color-ink)"
           strokeWidth="1.5"
           strokeDasharray="3 3"
@@ -87,10 +89,10 @@ export default function KnessetArc({
       ))}
       <text
         x={cx}
-        y={cy - 2}
+        y={rnd(cy + 16)}
         textAnchor="middle"
         className="num"
-        fontSize={w / 12}
+        fontSize={rnd(w / 11)}
         fontWeight="900"
         fill="var(--color-ink)"
       >
@@ -98,13 +100,14 @@ export default function KnessetArc({
       </text>
       <text
         x={cx}
-        y={cy + 10}
+        y={rnd(cy + 30)}
         textAnchor="middle"
-        fontSize={w / 30}
+        fontSize={rnd(w / 32)}
         fill="var(--color-muted)"
       >
         מתוך {totalSeats}
       </text>
     </svg>
+    </div>
   );
 }

@@ -81,7 +81,7 @@ export async function ensureSeeded(): Promise<SeedResult> {
       slug: DEFAULT_ELECTION_SLUG,
       name: "26th Knesset Election",
       nameHe: "הבחירות לכנסת ה-26",
-      electionDay: new Date("2026-10-27T00:00:00+03:00"),
+      electionDay: new Date("2026-10-27T20:00:00+03:00"),
       listSubmissionDate: new Date("2026-09-08T22:00:00+03:00"),
       totalSeats: 120,
       thresholdPercent: 3.25,

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import PredictionForm from "./PredictionForm";
 import SeatBars from "@/components/SeatBars";
+import KnessetArc from "@/components/KnessetArc";
 import { getDashboard, AppError } from "@/lib/data";
 import { formatDateTime } from "@/lib/clientTime";
 
@@ -46,7 +47,19 @@ export default async function PredictPage({
           {myPrediction?.submitted ? (
             <div className="mt-4">
               <h2 className="mb-2 text-sm font-bold text-muted">התחזית שנשלחה</h2>
-              <SeatBars parties={parties} values={myPrediction.seats} />
+              <KnessetArc parties={parties} seats={myPrediction.seats} totalSeats={election.totalSeats} />
+              <div className="mt-3">
+                <SeatBars parties={parties} values={myPrediction.seats} />
+              </div>
+              {myPrediction.confidencePick.partyKey && (
+                <p className="mt-3 text-sm">
+                  ⭐ ניחוש הביטחון:{" "}
+                  <b>
+                    {parties.find((p) => p.key === myPrediction.confidencePick.partyKey)?.nameHe}
+                  </b>{" "}
+                  — <span className="num">{myPrediction.confidencePick.seats}</span> מנדטים
+                </p>
+              )}
             </div>
           ) : (
             <p className="mt-3 text-sm">לא נשלחה תחזית תקינה לפני הנעילה.</p>

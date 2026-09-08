@@ -20,5 +20,6 @@ export function formatDateTime(iso: string): string {
   return d.toLocaleString("he-IL", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: "Asia/Jerusalem",
   });
 }
