@@ -1,5 +1,6 @@
 # ניחוש הבחירות — Knesset Election Prediction Game
 
+
 A private prediction league for a group of friends. Everyone splits **120 Knesset
 seats** between the parties, answers bonus questions, and after the official results
 are entered the app scores everyone and shows a leaderboard.
