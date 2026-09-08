@@ -1,5 +1,15 @@
 import mongoose, { Schema, model, models, type InferSchemaType } from "mongoose";
 
+const ConfidencePickSchema = new Schema(
+  {
+    /** party key the participant is most confident about */
+    partyKey: { type: String, default: "" },
+    /** the exact seat count they're betting on (their own prediction for it) */
+    seats: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
 const PredictionSchema = new Schema(
   {
     groupId: { type: Schema.Types.ObjectId, ref: "Group", required: true, index: true },
@@ -13,9 +23,15 @@ const PredictionSchema = new Schema(
     seats: { type: Map, of: Number, default: {} },
     /** question qid -> answer (string | number | boolean). */
     answers: { type: Map, of: Schema.Types.Mixed, default: {} },
-    /** False while a draft, true once the participant has submitted a valid (=120) prediction. */
+    /** The one prediction the participant is most confident about. */
+    confidencePick: { type: ConfidencePickSchema, default: () => ({}) },
+    /** Answer to the group's Wild Prediction question. */
+    wildAnswer: { type: Schema.Types.Mixed, default: null },
+    /** False while a draft, true once the participant submitted a valid (=120) prediction. */
     submitted: { type: Boolean, default: false },
     submittedAt: { type: Date, default: null },
+    /** How many times the prediction was saved (see PredictionVersion for the log). */
+    revision: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

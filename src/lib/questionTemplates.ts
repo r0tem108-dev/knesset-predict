@@ -11,6 +11,7 @@ export interface QuestionTemplate {
   textHe: string;
   points: number;
   autoResolve: "" | "largestParty" | "blocWinner" | "partyCount" | "anyPartyBelowThreshold";
+  kind?: "" | "turnout";
   options?: { value: string; label: string }[];
   order: number;
 }
@@ -78,6 +79,16 @@ export function defaultQuestions(blocs: { key: string; labelHe: string }[]): Que
       points: 10,
       autoResolve: "",
       order: 6,
+    },
+    {
+      qid: "turnout",
+      type: "number",
+      text: "National voter turnout (%) — tie-breaker",
+      textHe: "אחוז ההצבעה הארצי (%) — שובר שוויון",
+      points: 5,
+      autoResolve: "",
+      kind: "turnout",
+      order: 7,
     },
   ];
 }

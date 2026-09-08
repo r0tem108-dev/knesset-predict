@@ -7,6 +7,7 @@ import { Party } from "@/models/Party";
 import { Group } from "@/models/Group";
 import { Participant } from "@/models/Participant";
 import { Prediction } from "@/models/Prediction";
+import { PredictionVersion } from "@/models/PredictionVersion";
 import { OfficialResult } from "@/models/OfficialResult";
 import { newGroupCode, newToken } from "./codes";
 import { defaultQuestions } from "./questionTemplates";
@@ -26,6 +27,8 @@ import type {
   PredictionT,
   ViewerT,
   LeaderRowT,
+  ComparisonRowT,
+  GroupForecastT,
 } from "./types";
 import {
   scoreParticipant,
@@ -49,21 +52,47 @@ async function ready() {
   await ensureSeeded();
 }
 
+const toPartyLites = (parties: PartyT[]): PartyLite[] =>
+  parties.map((p) => ({
+    key: p.key,
+    name: p.name,
+    nameHe: p.nameHe,
+    color: p.color,
+    bloc: p.bloc,
+  }));
+
+const toQuestionLites = (group: GroupT): QuestionLite[] =>
+  group.questions.map((q) => ({
+    qid: q.qid,
+    type: q.type,
+    text: q.text,
+    textHe: q.textHe,
+    points: q.points,
+    autoResolve: q.autoResolve,
+    kind: q.kind,
+    enabled: q.enabled,
+  }));
+
 /* --------------------------------------------------------------- election -- */
 
 export interface ElectionBundle {
   election: ElectionT;
+  /** active lists only, ordered */
   parties: PartyT[];
+  /** every list including withdrawn / disqualified (admin views) */
+  allParties: PartyT[];
 }
 
 export async function getDefaultElection(): Promise<ElectionBundle> {
   await ready();
   const election = await Election.findOne({ slug: DEFAULT_ELECTION_SLUG }).lean();
   if (!election) throw new AppError("Default election not found", 500);
-  const parties = await Party.find({ electionId: election._id }).sort({ order: 1 }).lean();
+  const all = await Party.find({ electionId: election._id }).sort({ order: 1 }).lean();
+  const allParties = all.map(serializeParty);
   return {
     election: serializeElection(election),
-    parties: parties.map(serializeParty),
+    parties: allParties.filter((p) => p.status === "active"),
+    allParties,
   };
 }
 
@@ -74,7 +103,6 @@ export interface CreateGroupInput {
   creatorName: string;
   password?: string;
   predictionDeadline?: string;
-  revealPredictionsBeforeLock?: boolean;
   revealPredictionsAfterLock?: boolean;
 }
 
@@ -100,7 +128,6 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
   const adminToken = newToken();
   const participantToken = newToken();
 
-  // Retry on the (astronomically unlikely) code collision.
   let group = null;
   for (let i = 0; i < 5 && !group; i++) {
     try {
@@ -113,7 +140,6 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
         adminToken,
         predictionDeadline: deadline,
         settings: {
-          revealPredictionsBeforeLock: Boolean(input.revealPredictionsBeforeLock),
           revealPredictionsAfterLock: input.revealPredictionsAfterLock !== false,
         },
         questions: defaultQuestions(election.blocs),
@@ -133,11 +159,7 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
   });
   await Prediction.create({ groupId: group._id, participantId: participant._id });
 
-  return {
-    group: serializeGroup(group.toObject()),
-    adminToken,
-    participantToken,
-  };
+  return { group: serializeGroup(group.toObject()), adminToken, participantToken };
 }
 
 async function loadGroup(code: string) {
@@ -150,10 +172,6 @@ async function loadGroup(code: string) {
 export async function getGroup(code: string): Promise<GroupT> {
   const group = await loadGroup(code);
   return serializeGroup(group.toObject());
-}
-
-export function isLocked(group: GroupT): boolean {
-  return group.locked;
 }
 
 /* ------------------------------------------------------------------- join -- */
@@ -262,6 +280,8 @@ export async function getMyPrediction(code: string): Promise<PredictionT | null>
 export interface SavePredictionInput {
   seats: Record<string, number>;
   answers: Record<string, string | number | boolean>;
+  confidencePick?: { partyKey: string; seats: number };
+  wildAnswer?: string | number | boolean | null;
   submit: boolean;
 }
 
@@ -305,20 +325,102 @@ export async function savePrediction(
     else answers[qid] = String(raw);
   }
 
+  // Confidence pick — must be a real party; the staked count is that party's own seats.
+  let confidencePick = { partyKey: "", seats: 0 };
+  if (input.confidencePick?.partyKey && partyKeys.has(input.confidencePick.partyKey)) {
+    confidencePick = {
+      partyKey: input.confidencePick.partyKey,
+      seats: seats[input.confidencePick.partyKey] ?? 0,
+    };
+  }
+  if (input.submit && !confidencePick.partyKey) {
+    throw new AppError("Pick one prediction you're most confident about before submitting");
+  }
+
+  let wildAnswer: string | number | boolean | null = null;
+  if (gT.wildQuestion.enabled && input.wildAnswer != null && input.wildAnswer !== "") {
+    wildAnswer = input.wildAnswer as string | number | boolean;
+  }
+
+  const nextRevision = ((await Prediction.findOne({
+    groupId: group._id,
+    participantId: participant._id,
+  }).select("revision"))?.revision ?? 0) + 1;
+
   const pred = await Prediction.findOneAndUpdate(
     { groupId: group._id, participantId: participant._id },
     {
       $set: {
         seats,
         answers,
+        confidencePick,
+        wildAnswer,
         submitted: input.submit,
         submittedAt: input.submit ? new Date() : null,
+        revision: nextRevision,
       },
     },
     { new: true, upsert: true },
   ).lean();
 
+  // Immutable version snapshot.
+  await PredictionVersion.create({
+    groupId: group._id,
+    participantId: participant._id,
+    revision: nextRevision,
+    seats,
+    answers,
+    confidencePick,
+    wildAnswer,
+    submitted: input.submit,
+  });
+
   return serializePrediction(pred, String(participant._id));
+}
+
+export async function getMyVersionCount(code: string): Promise<number> {
+  const group = await loadGroup(code);
+  const token = await getParticipantToken(group.code);
+  if (!token) return 0;
+  const participant = await Participant.findOne({ groupId: group._id, token });
+  if (!participant) return 0;
+  return PredictionVersion.countDocuments({
+    groupId: group._id,
+    participantId: participant._id,
+  });
+}
+
+/* --------------------------------------------------------- group forecast -- */
+
+/** Average everyone's submitted predictions, rounded (largest-remainder) to 120. */
+function computeGroupForecast(
+  parties: PartyT[],
+  predictions: { seats: Record<string, number> }[],
+  totalSeats: number,
+): GroupForecastT | null {
+  if (predictions.length === 0) return null;
+  const averages: Record<string, number> = {};
+  for (const p of parties) {
+    const sum = predictions.reduce((s, pr) => s + Number(pr.seats[p.key] ?? 0), 0);
+    averages[p.key] = sum / predictions.length;
+  }
+  // Largest-remainder apportionment to hit exactly totalSeats.
+  const floors: Record<string, number> = {};
+  let used = 0;
+  for (const p of parties) {
+    floors[p.key] = Math.floor(averages[p.key]);
+    used += floors[p.key];
+  }
+  let remaining = totalSeats - used;
+  const byRemainder = [...parties].sort(
+    (a, b) => (averages[b.key] % 1) - (averages[a.key] % 1),
+  );
+  for (const p of byRemainder) {
+    if (remaining <= 0) break;
+    floors[p.key] += 1;
+    remaining -= 1;
+  }
+  return { seats: floors, averages };
 }
 
 /* --------------------------------------------------------------- dashboard -- */
@@ -328,15 +430,12 @@ export interface DashboardData {
   election: ElectionT;
   parties: PartyT[];
   viewer: ViewerT;
-  participants: (ParticipantT & { hasSubmitted: boolean })[];
+  participants: (ParticipantT & { hasSubmitted: boolean; revision: number })[];
   myPrediction: PredictionT | null;
+  myVersionCount: number;
   leaderboard: LeaderRowT[] | null;
-  comparison: {
-    participantId: string;
-    displayName: string;
-    seats: Record<string, number>;
-    answers: Record<string, string | number | boolean>;
-  }[] | null;
+  comparison: ComparisonRowT[] | null;
+  groupForecast: GroupForecastT | null;
   officialSeats: Record<string, number> | null;
 }
 
@@ -350,32 +449,51 @@ export async function getDashboard(code: string): Promise<DashboardData> {
     .sort({ createdAt: 1 })
     .lean();
   const predDocs = await Prediction.find({ groupId: group._id }).lean();
-  const predByParticipant = new Map(
-    predDocs.map((p) => [String(p.participantId), p]),
-  );
+  const predByParticipant = new Map(predDocs.map((p) => [String(p.participantId), p]));
 
-  const participants = participantDocs.map((p) => ({
-    ...serializeParticipant(p),
-    hasSubmitted: Boolean(predByParticipant.get(String(p._id))?.submitted),
-  }));
+  const participants = participantDocs.map((p) => {
+    const pred = predByParticipant.get(String(p._id));
+    return {
+      ...serializeParticipant(p),
+      hasSubmitted: Boolean(pred?.submitted),
+      revision: (pred?.revision as number) ?? 0,
+    };
+  });
 
   const myPrediction = await getMyPrediction(code);
+  const myVersionCount = await getMyVersionCount(code);
 
-  const canSeeComparison =
-    (gT.locked && gT.settings.revealPredictionsAfterLock) ||
-    (!gT.locked && gT.settings.revealPredictionsBeforeLock);
+  // Reveal Mode: predictions are visible ONLY after lock, and only if enabled.
+  const revealed = gT.locked && gT.settings.revealPredictionsAfterLock;
 
-  let comparison: DashboardData["comparison"] = null;
-  if (canSeeComparison) {
-    comparison = participantDocs.map((p) => {
-      const pred = predByParticipant.get(String(p._id));
-      return {
-        participantId: String(p._id),
-        displayName: p.displayName,
-        seats: mapToObj<number>(pred?.seats),
-        answers: mapToObj<string | number | boolean>(pred?.answers),
-      };
-    });
+  const submittedPreds = participantDocs
+    .map((p) => predByParticipant.get(String(p._id)))
+    .filter((pr): pr is NonNullable<typeof pr> => Boolean(pr?.submitted))
+    .map((pr) => ({ seats: mapToObj<number>(pr.seats) }));
+
+  let comparison: ComparisonRowT[] | null = null;
+  let groupForecast: GroupForecastT | null = null;
+  if (revealed) {
+    comparison = participantDocs
+      .filter((p) => predByParticipant.get(String(p._id))?.submitted)
+      .map((p) => {
+        const pred = predByParticipant.get(String(p._id))!;
+        const seats = mapToObj<number>(pred.seats);
+        const cp = (pred.confidencePick as Record<string, unknown>) ?? {};
+        return {
+          participantId: String(p._id),
+          displayName: p.displayName,
+          seats,
+          answers: mapToObj<string | number | boolean>(pred.answers),
+          confidencePick: {
+            partyKey: (cp.partyKey as string) ?? "",
+            seats: (cp.seats as number) ?? 0,
+          },
+          wildAnswer: (pred.wildAnswer as string | number | boolean | null) ?? null,
+          totalSeats: Object.values(seats).reduce((a, b) => a + b, 0),
+        };
+      });
+    groupForecast = computeGroupForecast(parties, submittedPreds, election.totalSeats);
   }
 
   let leaderboard: LeaderRowT[] | null = null;
@@ -393,8 +511,10 @@ export async function getDashboard(code: string): Promise<DashboardData> {
     viewer,
     participants,
     myPrediction,
+    myVersionCount,
     leaderboard,
     comparison,
+    groupForecast,
     officialSeats,
   };
 }
@@ -408,6 +528,23 @@ export async function lockGroup(code: string, lock: boolean): Promise<GroupT> {
   return serializeGroup(group.toObject());
 }
 
+export async function updateGroupSettings(
+  code: string,
+  input: { predictionDeadline?: string; revealPredictionsAfterLock?: boolean },
+): Promise<GroupT> {
+  const group = await requireAdmin(code);
+  if (input.predictionDeadline) {
+    const d = new Date(input.predictionDeadline);
+    if (Number.isNaN(d.getTime())) throw new AppError("Invalid deadline");
+    group.predictionDeadline = d;
+  }
+  if (typeof input.revealPredictionsAfterLock === "boolean") {
+    group.set("settings.revealPredictionsAfterLock", input.revealPredictionsAfterLock);
+  }
+  await group.save();
+  return serializeGroup(group.toObject());
+}
+
 export interface QuestionInput {
   qid: string;
   type: "party" | "choice" | "boolean" | "number";
@@ -416,6 +553,7 @@ export interface QuestionInput {
   options: { value: string; label: string }[];
   points: number;
   autoResolve: "" | "largestParty" | "blocWinner" | "partyCount" | "anyPartyBelowThreshold";
+  kind: "" | "turnout";
   enabled: boolean;
   order: number;
 }
@@ -437,10 +575,32 @@ export async function updateQuestions(
       options: q.options ?? [],
       points: Number(q.points) || 0,
       autoResolve: q.autoResolve ?? "",
+      kind: q.kind ?? "",
       enabled: q.enabled !== false,
       order: q.order ?? i + 1,
     })),
   );
+  await group.save();
+  return serializeGroup(group.toObject());
+}
+
+export async function updateWildQuestion(
+  code: string,
+  wild: { enabled: boolean; textHe: string; text?: string; options: { value: string; label: string }[]; points: number },
+): Promise<GroupT> {
+  const group = await requireAdmin(code);
+  const gT = serializeGroup(group.toObject());
+  if (gT.locked && !gT.resultsPublishedAt) {
+    // allow editing the correct answer path later, but not the question text after lock
+  }
+  if (gT.locked) throw new AppError("Cannot edit the wild question after lock", 403);
+  group.set("wildQuestion", {
+    enabled: Boolean(wild.enabled),
+    text: wild.text ?? wild.textHe,
+    textHe: wild.textHe,
+    options: wild.options ?? [],
+    points: Number(wild.points) || 0,
+  });
   await group.save();
   return serializeGroup(group.toObject());
 }
@@ -455,11 +615,69 @@ export async function updateScoring(
   return serializeGroup(group.toObject());
 }
 
+export interface PartyInput {
+  key: string;
+  nameHe: string;
+  name?: string;
+  commonNameHe?: string;
+  ballotLetters?: string;
+  leaderHe?: string;
+  color?: string;
+  bloc?: string;
+  status?: "active" | "withdrawn" | "disqualified";
+  order?: number;
+}
+
+export async function updateParties(code: string, parties: PartyInput[]): Promise<PartyT[]> {
+  const group = await requireAdmin(code);
+  const gT = serializeGroup(group.toObject());
+  if (gT.locked) throw new AppError("Cannot edit lists after predictions are locked", 403);
+  const election = await Election.findById(group.electionId);
+  if (!election) throw new AppError("Election missing", 500);
+
+  const existing = await Party.find({ electionId: election._id });
+  const byKey = new Map(existing.map((p) => [p.key, p]));
+
+  let order = 1;
+  for (const input of parties) {
+    const key = input.key?.trim();
+    if (!key || !input.nameHe?.trim()) continue;
+    const doc = byKey.get(key);
+    const fields = {
+      nameHe: input.nameHe.trim(),
+      name: input.name?.trim() || input.nameHe.trim(),
+      commonNameHe: input.commonNameHe ?? "",
+      ballotLetters: input.ballotLetters ?? "",
+      leaderHe: input.leaderHe ?? "",
+      color: input.color || "#64748b",
+      bloc: input.bloc ?? "",
+      status: input.status ?? "active",
+      order: order++,
+    };
+    if (doc) {
+      doc.set(fields);
+      await doc.save();
+      byKey.delete(key);
+    } else {
+      await Party.create({ ...fields, electionId: election._id, key });
+    }
+  }
+  // Any list omitted from the payload is left untouched (safer than deleting).
+
+  const { allParties } = await getDefaultElection();
+  return allParties;
+}
+
+/* ------------------------------------------------------------- results ---- */
+
 export interface ResultsInput {
   seats: Record<string, number>;
   answers: Record<string, string | number | boolean>;
+  wildAnswer?: string | number | boolean | null;
+  turnoutPercent?: number | null;
   enteredBy?: string;
-  publish: boolean;
+  /** "save" keeps a draft (not scored); "provisional" / "final" publish it */
+  action: "save" | "provisional" | "final";
 }
 
 export async function saveResults(code: string, input: ResultsInput): Promise<GroupT> {
@@ -474,28 +692,36 @@ export async function saveResults(code: string, input: ResultsInput): Promise<Gr
     if (!Number.isNaN(v) && v >= 0) seats[key] = v;
   }
 
-  if (input.publish) {
+  const publishing = input.action === "provisional" || input.action === "final";
+  if (input.action === "final") {
     const total = Object.values(seats).reduce((a, b) => a + b, 0);
     if (total !== election.totalSeats) {
       throw new AppError(
-        `Official seats must total ${election.totalSeats} to publish (currently ${total})`,
+        `Final results must total ${election.totalSeats} (currently ${total})`,
       );
     }
   }
 
+  const prev = await OfficialResult.findOne({ groupId: group._id });
   await OfficialResult.findOneAndUpdate(
     { groupId: group._id },
     {
       $set: {
+        stage: input.action === "final" ? "final" : "provisional",
         seats,
         answers: input.answers ?? {},
+        wildAnswer: input.wildAnswer ?? null,
+        turnoutPercent: input.turnoutPercent ?? null,
         enteredBy: input.enteredBy ?? "",
+        revision: (prev?.revision ?? 0) + 1,
       },
     },
     { upsert: true },
   );
 
-  group.resultsPublishedAt = input.publish ? new Date() : null;
+  if (publishing && !group.resultsPublishedAt) group.resultsPublishedAt = new Date();
+  if (input.action === "final") group.resultsFinalizedAt = new Date();
+  if (input.action === "save" && !prev) group.resultsPublishedAt = null;
   await group.save();
   return serializeGroup(group.toObject());
 }
@@ -503,7 +729,11 @@ export async function saveResults(code: string, input: ResultsInput): Promise<Gr
 export interface OfficialResultDraft {
   seats: Record<string, number>;
   answers: Record<string, string | number | boolean>;
+  wildAnswer: string | number | boolean | null;
+  turnoutPercent: number | null;
   enteredBy: string;
+  stage: "provisional" | "final" | null;
+  revision: number;
 }
 
 export async function getOfficialResultDraft(code: string): Promise<OfficialResultDraft> {
@@ -512,7 +742,11 @@ export async function getOfficialResultDraft(code: string): Promise<OfficialResu
   return {
     seats: mapToObj<number>(result?.seats),
     answers: mapToObj<string | number | boolean>(result?.answers),
+    wildAnswer: (result?.wildAnswer as string | number | boolean | null) ?? null,
+    turnoutPercent: (result?.turnoutPercent as number | null) ?? null,
     enteredBy: (result?.enteredBy as string) ?? "",
+    stage: (result?.stage as "provisional" | "final") ?? null,
+    revision: (result?.revision as number) ?? 0,
   };
 }
 
@@ -531,57 +765,92 @@ export async function computeLeaderboard(code: string): Promise<LeaderboardResul
   const result = await OfficialResult.findOne({ groupId: group._id }).lean();
   const officialSeats = mapToObj<number>(result?.seats);
   const officialAnswers = mapToObj<string | number | boolean>(result?.answers);
+  const officialWild = (result?.wildAnswer as string | number | boolean | null) ?? null;
 
-  const partyLites: PartyLite[] = parties.map((p) => ({
-    key: p.key,
-    name: p.name,
-    nameHe: p.nameHe,
-    color: p.color,
-    bloc: p.bloc,
-  }));
-  const questionLites: QuestionLite[] = gT.questions.map((q) => ({
-    qid: q.qid,
-    type: q.type,
-    text: q.text,
-    textHe: q.textHe,
-    points: q.points,
-    autoResolve: q.autoResolve,
-    enabled: q.enabled,
-  }));
+  const partyLites = toPartyLites(parties);
+  const questionLites = toQuestionLites(gT);
   const config: ScoringConfig = gT.scoring;
 
   const participantDocs = await Participant.find({ groupId: group._id }).lean();
   const predDocs = await Prediction.find({ groupId: group._id }).lean();
   const predByParticipant = new Map(predDocs.map((p) => [String(p.participantId), p]));
 
+  const submittedSeatMaps = participantDocs
+    .map((p) => predByParticipant.get(String(p._id)))
+    .filter((pr): pr is NonNullable<typeof pr> => Boolean(pr?.submitted))
+    .map((pr) => ({ seats: mapToObj<number>(pr.seats) }));
+  const forecast = computeGroupForecast(parties, submittedSeatMaps, election.totalSeats);
+
   const scored = participantDocs.map((p) => {
     const pred = predByParticipant.get(String(p._id));
+    const predictedSeats = mapToObj<number>(pred?.seats);
+    const cp = (pred?.confidencePick as Record<string, unknown>) ?? {};
     const s = scoreParticipant({
       parties: partyLites,
       questions: questionLites,
       blocs: election.blocs,
       config,
       thresholdSeats: election.thresholdSeats,
-      predictedSeats: mapToObj<number>(pred?.seats),
+      predictedSeats,
       predictedAnswers: mapToObj(pred?.answers),
+      confidencePick: { partyKey: (cp.partyKey as string) ?? "", seats: (cp.seats as number) ?? 0 },
+      wildPredicted: (pred?.wildAnswer as string | number | boolean | null) ?? null,
+      wildPoints: gT.wildQuestion.points,
       actualSeats: officialSeats,
       actualAnswers: officialAnswers,
+      actualWildAnswer: officialWild,
     });
+
+    // worst single-party miss + consensus deviation
+    let worstError = 0;
+    let worstPartyKey = "";
+    for (const row of s.seats.rows) {
+      if (row.error > worstError) {
+        worstError = row.error;
+        worstPartyKey = row.key;
+      }
+    }
+    let consensusDeviation = 0;
+    if (forecast) {
+      for (const party of parties) {
+        consensusDeviation += Math.abs(
+          Number(predictedSeats[party.key] ?? 0) - Number(forecast.seats[party.key] ?? 0),
+        );
+      }
+    }
+
     return {
       participantId: String(p._id),
       displayName: p.displayName,
       submitted: Boolean(pred?.submitted),
+      worstError,
+      worstPartyKey,
+      consensusDeviation,
       ...s,
     };
   });
 
-  // Only rank participants who actually submitted a prediction.
   const ranked = scored
     .filter((s) => s.submitted)
-    .sort((a, b) => b.total - a.total || a.avgError - b.avgError);
+    .sort(
+      (a, b) =>
+        b.total - a.total ||
+        a.totalSeatError - b.totalSeatError ||
+        (a.turnoutDelta ?? 999) - (b.turnoutDelta ?? 999),
+    );
 
-  const minAvgError = ranked.length ? Math.min(...ranked.map((s) => s.avgError)) : 0;
-  const maxExact = ranked.length ? Math.max(...ranked.map((s) => s.exactCount)) : 0;
+  if (ranked.length === 0) return { rows: [], officialSeats };
+
+  const maxExact = Math.max(...ranked.map((s) => s.exactCount));
+  const minTotalError = Math.min(...ranked.map((s) => s.totalSeatError));
+  const maxThreshold = Math.max(...ranked.map((s) => s.thresholdCorrectCount));
+  const maxWorst = Math.max(...ranked.map((s) => s.worstError));
+  // Contrarian genius: top-3 finisher whose map deviated most from consensus.
+  const top3 = ranked.slice(0, 3);
+  const contrarian =
+    top3.length > 0
+      ? top3.reduce((a, b) => (b.consensusDeviation > a.consensusDeviation ? b : a))
+      : null;
 
   const rows: LeaderRowT[] = ranked.map((s, i) => ({
     rank: i + 1,
@@ -590,11 +859,25 @@ export async function computeLeaderboard(code: string): Promise<LeaderboardResul
     total: s.total,
     seatScore: s.seatScore,
     bonusScore: s.bonusScore,
+    confidencePickAwarded: s.confidencePickAwarded,
+    totalSeatError: s.totalSeatError,
     avgError: s.avgError,
     exactCount: s.exactCount,
+    offByOneCount: s.offByOneCount,
+    thresholdCorrectCount: s.thresholdCorrectCount,
+    turnoutDelta: s.turnoutDelta,
+    worstError: s.worstError,
+    worstPartyKey: s.worstPartyKey,
     isFirst: i === 0,
-    isMostAccurate: s.avgError === minAvgError,
-    isMostExact: maxExact > 0 && s.exactCount === maxExact,
+    isOracle: i === 0,
+    isBullseye: maxExact > 0 && s.exactCount === maxExact,
+    isClosestKnesset: s.totalSeatError === minTotalError,
+    isThresholdMaster: maxThreshold > 0 && s.thresholdCorrectCount === maxThreshold,
+    isContrarianGenius:
+      contrarian != null &&
+      s.participantId === contrarian.participantId &&
+      contrarian.consensusDeviation >= 12,
+    isBiggestMiss: maxWorst > 0 && s.worstError === maxWorst,
   }));
 
   return { rows, officialSeats };
@@ -608,13 +891,7 @@ export async function previewAutoAnswers(
   const group = await loadGroup(code);
   const gT = serializeGroup(group.toObject());
   const { election, parties } = await getDefaultElection();
-  const partyLites: PartyLite[] = parties.map((p) => ({
-    key: p.key,
-    name: p.name,
-    nameHe: p.nameHe,
-    color: p.color,
-    bloc: p.bloc,
-  }));
+  const partyLites = toPartyLites(parties);
   const out: Record<string, string | number | boolean | null> = {};
   for (const q of gT.questions) {
     if (!q.autoResolve) continue;

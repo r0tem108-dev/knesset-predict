@@ -6,13 +6,17 @@ import {
   joinGroup,
   savePrediction,
   lockGroup,
+  updateGroupSettings,
   updateQuestions,
+  updateWildQuestion,
   updateScoring,
+  updateParties,
   saveResults,
   AppError,
   type CreateGroupInput,
   type SavePredictionInput,
   type QuestionInput,
+  type PartyInput,
   type ResultsInput,
 } from "@/lib/data";
 import { setAdminToken, setParticipantToken } from "@/lib/session";
@@ -28,6 +32,13 @@ function fail(err: unknown): ActionResult<never> {
   if (err instanceof AppError) return { ok: false, error: err.message };
   console.error(err);
   return { ok: false, error: "Something went wrong. Please try again." };
+}
+
+function revalidateGroup(code: string) {
+  revalidatePath(`/g/${code}`);
+  revalidatePath(`/g/${code}/predict`);
+  revalidatePath(`/g/${code}/admin`);
+  revalidatePath(`/g/${code}/compare`);
 }
 
 export async function createGroupAction(
@@ -49,11 +60,7 @@ export async function joinGroupAction(input: {
   password?: string;
 }): Promise<ActionResult<{ code: string }>> {
   try {
-    const { participantToken } = await joinGroup(
-      input.code,
-      input.displayName,
-      input.password,
-    );
+    const { participantToken } = await joinGroup(input.code, input.displayName, input.password);
     await setParticipantToken(input.code.toUpperCase(), participantToken);
     return { ok: true, data: { code: input.code.toUpperCase() } };
   } catch (err) {
@@ -67,7 +74,7 @@ export async function savePredictionAction(
 ): Promise<ActionResult> {
   try {
     const prediction = await savePrediction(code, input);
-    revalidatePath(`/g/${code}`);
+    revalidateGroup(code);
     return { ok: true, data: prediction };
   } catch (err) {
     return fail(err);
@@ -77,7 +84,20 @@ export async function savePredictionAction(
 export async function lockGroupAction(code: string, lock: boolean): Promise<ActionResult> {
   try {
     const group = await lockGroup(code, lock);
-    revalidatePath(`/g/${code}`);
+    revalidateGroup(code);
+    return { ok: true, data: group };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function updateGroupSettingsAction(
+  code: string,
+  input: { predictionDeadline?: string; revealPredictionsAfterLock?: boolean },
+): Promise<ActionResult> {
+  try {
+    const group = await updateGroupSettings(code, input);
+    revalidateGroup(code);
     return { ok: true, data: group };
   } catch (err) {
     return fail(err);
@@ -90,7 +110,25 @@ export async function updateQuestionsAction(
 ): Promise<ActionResult> {
   try {
     const group = await updateQuestions(code, questions);
-    revalidatePath(`/g/${code}`);
+    revalidateGroup(code);
+    return { ok: true, data: group };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function updateWildQuestionAction(
+  code: string,
+  wild: {
+    enabled: boolean;
+    textHe: string;
+    options: { value: string; label: string }[];
+    points: number;
+  },
+): Promise<ActionResult> {
+  try {
+    const group = await updateWildQuestion(code, wild);
+    revalidateGroup(code);
     return { ok: true, data: group };
   } catch (err) {
     return fail(err);
@@ -103,8 +141,21 @@ export async function updateScoringAction(
 ): Promise<ActionResult> {
   try {
     const group = await updateScoring(code, scoring);
-    revalidatePath(`/g/${code}`);
+    revalidateGroup(code);
     return { ok: true, data: group };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function updatePartiesAction(
+  code: string,
+  parties: PartyInput[],
+): Promise<ActionResult> {
+  try {
+    const updated = await updateParties(code, parties);
+    revalidateGroup(code);
+    return { ok: true, data: updated };
   } catch (err) {
     return fail(err);
   }
@@ -116,7 +167,7 @@ export async function saveResultsAction(
 ): Promise<ActionResult> {
   try {
     const group = await saveResults(code, input);
-    revalidatePath(`/g/${code}`);
+    revalidateGroup(code);
     return { ok: true, data: group };
   } catch (err) {
     return fail(err);

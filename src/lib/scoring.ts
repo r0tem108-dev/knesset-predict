@@ -1,12 +1,20 @@
 /**
- * Scoring engine.
+ * Scoring engine — designed for an Israeli-election seat-prediction game.
  *
- * Deliberately kept as pure functions with no DB / framework imports so that:
- *  - it is trivially unit-testable,
- *  - alternative scoring strategies can be added without touching callers,
- *  - a future multi-election version can reuse it unchanged.
+ * Pure functions, no DB / framework imports, so it is unit-testable and reusable
+ * across future elections. Everything tunable lives in `ScoringConfig`.
  *
- * The only entry point callers need is `scoreParticipant`.
+ * Concepts:
+ *  - "entered the Knesset" == actual seats > 0 (a list either got seats or 0).
+ *  - "predicted to enter"  == predicted seats > 0 (0 ⇒ you predicted it fails).
+ *
+ * Per list the participant can earn:
+ *  - seat-accuracy points (tiered by |error|) — only for lists that entered
+ *  - a threshold bonus for correctly calling enter / fail
+ *  - a penalty for piling seats onto a list that ultimately failed
+ * Plus: bonus questions, the Wild Prediction, and the Confidence Pick.
+ *
+ * The single entry point callers need is `scoreParticipant`.
  */
 
 export type SeatMap = Record<string, number>;
@@ -23,7 +31,10 @@ export interface ScoringConfig {
   linearBase: number;
   linearSlope: number;
   exactBonus: number;
-  thresholdPoints: number;
+  thresholdEnterPoints: number;
+  thresholdFailPoints: number;
+  failedListSeatPenaltyPerSeat: number;
+  confidencePickBonus: number;
 }
 
 export interface PartyLite {
@@ -41,7 +52,13 @@ export interface QuestionLite {
   textHe: string;
   points: number;
   autoResolve: "" | "largestParty" | "blocWinner" | "partyCount" | "anyPartyBelowThreshold";
+  kind?: "" | "turnout";
   enabled: boolean;
+}
+
+export interface ConfidencePick {
+  partyKey: string;
+  seats: number;
 }
 
 /* ------------------------------------------------------------------ seats -- */
@@ -50,7 +67,6 @@ export function seatPointsForError(error: number, config: ScoringConfig): number
   if (config.seatMethod === "linear") {
     return Math.max(0, config.linearBase - config.linearSlope * error);
   }
-  // tiered: first tier (best-first) whose maxError covers this error
   const sorted = [...config.tiers].sort((a, b) => a.maxError - b.maxError);
   for (const tier of sorted) {
     if (error <= tier.maxError) return tier.points;
@@ -64,21 +80,29 @@ export interface PartyBreakdownRow {
   actual: number;
   error: number;
   exact: boolean;
-  points: number;
-  /** predicted this party would clear the threshold */
-  predictedPass: boolean;
-  actualPass: boolean;
+  /** seat-accuracy points (0 if the list did not enter) */
+  seatPoints: number;
+  predictedEnter: boolean;
+  actualEnter: boolean;
   thresholdCorrect: boolean;
+  /** +enter / +fail bonus, or negative failed-list penalty */
+  thresholdPoints: number;
 }
 
 export interface SeatScoreResult {
   rows: PartyBreakdownRow[];
-  seatScore: number;
+  /** Σ seat-accuracy points */
+  seatAccuracyPoints: number;
+  /** Σ threshold bonuses − Σ failed-list penalties */
+  thresholdPoints: number;
+  /** exactBonus × (exact predictions for lists that entered) */
   exactBonusAwarded: number;
-  thresholdScore: number;
-  exactCount: number;
+  /** Σ |predicted − actual| across every list — the headline "closest map" metric */
+  totalSeatError: number;
   avgError: number;
-  totalAbsError: number;
+  exactCount: number;
+  offByOneCount: number;
+  thresholdCorrectCount: number;
 }
 
 export function scoreSeats(
@@ -86,38 +110,57 @@ export function scoreSeats(
   predicted: SeatMap,
   actual: SeatMap,
   config: ScoringConfig,
-  thresholdSeats: number,
 ): SeatScoreResult {
   const rows: PartyBreakdownRow[] = parties.map((p) => {
-    const pred = Number(predicted[p.key] ?? 0);
-    const act = Number(actual[p.key] ?? 0);
+    const pred = Math.max(0, Number(predicted[p.key] ?? 0));
+    const act = Math.max(0, Number(actual[p.key] ?? 0));
     const error = Math.abs(pred - act);
-    const exact = pred === act;
-    const predictedPass = pred >= thresholdSeats;
-    const actualPass = act >= thresholdSeats;
+    const predictedEnter = pred > 0;
+    const actualEnter = act > 0;
+    const exact = pred === act && actualEnter;
+
+    const seatPoints = actualEnter ? seatPointsForError(error, config) : 0;
+
+    let thresholdPoints = 0;
+    if (predictedEnter && actualEnter) thresholdPoints = config.thresholdEnterPoints;
+    else if (!predictedEnter && !actualEnter) thresholdPoints = config.thresholdFailPoints;
+    else if (predictedEnter && !actualEnter)
+      thresholdPoints = -(pred * config.failedListSeatPenaltyPerSeat);
+
     return {
       key: p.key,
       predicted: pred,
       actual: act,
       error,
       exact,
-      points: seatPointsForError(error, config),
-      predictedPass,
-      actualPass,
-      thresholdCorrect: predictedPass === actualPass,
+      seatPoints,
+      predictedEnter,
+      actualEnter,
+      thresholdCorrect: predictedEnter === actualEnter,
+      thresholdPoints,
     };
   });
 
-  const seatScore = round2(rows.reduce((s, r) => s + r.points, 0));
+  const seatAccuracyPoints = round2(rows.reduce((s, r) => s + r.seatPoints, 0));
+  const thresholdPoints = round2(rows.reduce((s, r) => s + r.thresholdPoints, 0));
   const exactCount = rows.filter((r) => r.exact).length;
+  const offByOneCount = rows.filter((r) => r.actualEnter && r.error === 1).length;
+  const thresholdCorrectCount = rows.filter((r) => r.thresholdCorrect).length;
   const exactBonusAwarded = round2(exactCount * config.exactBonus);
-  const thresholdScore = round2(
-    rows.filter((r) => r.thresholdCorrect).length * config.thresholdPoints,
-  );
-  const totalAbsError = rows.reduce((s, r) => s + r.error, 0);
-  const avgError = rows.length ? round2(totalAbsError / rows.length) : 0;
+  const totalSeatError = rows.reduce((s, r) => s + r.error, 0);
+  const avgError = rows.length ? round2(totalSeatError / rows.length) : 0;
 
-  return { rows, seatScore, exactBonusAwarded, thresholdScore, exactCount, avgError, totalAbsError };
+  return {
+    rows,
+    seatAccuracyPoints,
+    thresholdPoints,
+    exactBonusAwarded,
+    totalSeatError,
+    avgError,
+    exactCount,
+    offByOneCount,
+    thresholdCorrectCount,
+  };
 }
 
 /* -------------------------------------------------------------- questions -- */
@@ -160,12 +203,10 @@ export function resolveAutoAnswer(
       return best;
     }
     case "partyCount":
-      return parties.filter((p) => Number(actual[p.key] ?? 0) >= thresholdSeats).length;
+      return parties.filter((p) => Number(actual[p.key] ?? 0) > 0).length;
     case "anyPartyBelowThreshold":
-      return parties.some((p) => {
-        const s = Number(actual[p.key] ?? 0);
-        return s > 0 && s < thresholdSeats;
-      });
+      // any list that ran (predicted or listed) but got 0
+      return parties.some((p) => Number(actual[p.key] ?? 0) === 0);
     default:
       return null;
   }
@@ -177,21 +218,20 @@ export interface QuestionBreakdownRow {
   correct: string | number | boolean | null;
   points: number;
   awarded: number;
+  isTurnout: boolean;
 }
 
 export interface QuestionScoreResult {
   rows: QuestionBreakdownRow[];
   bonusScore: number;
+  /** |predicted − actual| turnout %, for the tie-breaker (null if not answered/known) */
+  turnoutDelta: number | null;
 }
 
 function answersEqual(a: unknown, b: unknown): boolean {
   if (a === null || a === undefined || b === null || b === undefined) return false;
-  if (typeof a === "boolean" || typeof b === "boolean") {
-    return toBool(a) === toBool(b);
-  }
-  if (typeof a === "number" || typeof b === "number") {
-    return Number(a) === Number(b);
-  }
+  if (typeof a === "boolean" || typeof b === "boolean") return toBool(a) === toBool(b);
+  if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
   return String(a).trim() === String(b).trim();
 }
 
@@ -211,12 +251,19 @@ export function scoreQuestions(
   blocs: { key: string }[],
 ): QuestionScoreResult {
   const rows: QuestionBreakdownRow[] = [];
+  let turnoutDelta: number | null = null;
+
   for (const q of questions) {
     if (!q.enabled) continue;
     const correct = q.autoResolve
       ? resolveAutoAnswer(q, parties, actualSeats, thresholdSeats, blocs)
       : (actualAnswers[q.qid] ?? null);
     const predicted = predictedAnswers[q.qid] ?? null;
+    const isTurnout = q.kind === "turnout";
+
+    if (isTurnout && predicted != null && correct != null) {
+      turnoutDelta = Math.abs(Number(predicted) - Number(correct));
+    }
     const isCorrect = answersEqual(predicted, correct);
     rows.push({
       qid: q.qid,
@@ -224,9 +271,10 @@ export function scoreQuestions(
       correct: correct as QuestionBreakdownRow["correct"],
       points: q.points,
       awarded: isCorrect ? q.points : 0,
+      isTurnout,
     });
   }
-  return { rows, bonusScore: round2(rows.reduce((s, r) => s + r.awarded, 0)) };
+  return { rows, bonusScore: round2(rows.reduce((s, r) => s + r.awarded, 0)), turnoutDelta };
 }
 
 /* ------------------------------------------------------------- aggregate -- */
@@ -234,11 +282,19 @@ export function scoreQuestions(
 export interface ParticipantScore {
   seats: SeatScoreResult;
   questions: QuestionScoreResult;
+  /** seat accuracy + threshold + exact bonus + confidence pick */
   seatScore: number;
+  /** bonus questions + wild prediction */
   bonusScore: number;
+  confidencePickAwarded: number;
+  wildAwarded: number;
   total: number;
+  totalSeatError: number;
   avgError: number;
   exactCount: number;
+  offByOneCount: number;
+  thresholdCorrectCount: number;
+  turnoutDelta: number | null;
 }
 
 export function scoreParticipant(args: {
@@ -249,16 +305,14 @@ export function scoreParticipant(args: {
   thresholdSeats: number;
   predictedSeats: SeatMap;
   predictedAnswers: AnswerMap;
+  confidencePick?: ConfidencePick | null;
+  wildPredicted?: string | number | boolean | null;
+  wildPoints?: number;
   actualSeats: SeatMap;
   actualAnswers: AnswerMap;
+  actualWildAnswer?: string | number | boolean | null;
 }): ParticipantScore {
-  const seats = scoreSeats(
-    args.parties,
-    args.predictedSeats,
-    args.actualSeats,
-    args.config,
-    args.thresholdSeats,
-  );
+  const seats = scoreSeats(args.parties, args.predictedSeats, args.actualSeats, args.config);
   const questions = scoreQuestions(
     args.questions,
     args.parties,
@@ -268,16 +322,50 @@ export function scoreParticipant(args: {
     args.thresholdSeats,
     args.blocs,
   );
-  const seatScore = round2(seats.seatScore + seats.exactBonusAwarded + seats.thresholdScore);
-  const bonusScore = questions.bonusScore;
+
+  // Confidence pick: exact seat prediction for the chosen list.
+  let confidencePickAwarded = 0;
+  const pick = args.confidencePick;
+  if (pick && pick.partyKey) {
+    const pred = Number(args.predictedSeats[pick.partyKey] ?? 0);
+    const act = Number(args.actualSeats[pick.partyKey] ?? 0);
+    if (pred === act && Object.keys(args.actualSeats).length > 0) {
+      confidencePickAwarded = args.config.confidencePickBonus;
+    }
+  }
+
+  // Wild prediction.
+  let wildAwarded = 0;
+  if (
+    args.wildPredicted != null &&
+    args.actualWildAnswer != null &&
+    answersEqual(args.wildPredicted, args.actualWildAnswer)
+  ) {
+    wildAwarded = args.wildPoints ?? 0;
+  }
+
+  const seatScore = round2(
+    seats.seatAccuracyPoints +
+      seats.thresholdPoints +
+      seats.exactBonusAwarded +
+      confidencePickAwarded,
+  );
+  const bonusScore = round2(questions.bonusScore + wildAwarded);
+
   return {
     seats,
     questions,
     seatScore,
     bonusScore,
+    confidencePickAwarded,
+    wildAwarded,
     total: round2(seatScore + bonusScore),
+    totalSeatError: seats.totalSeatError,
     avgError: seats.avgError,
     exactCount: seats.exactCount,
+    offByOneCount: seats.offByOneCount,
+    thresholdCorrectCount: seats.thresholdCorrectCount,
+    turnoutDelta: questions.turnoutDelta,
   };
 }
 

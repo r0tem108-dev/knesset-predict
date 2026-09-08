@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { PartyT, QuestionT, BlocT } from "@/lib/types";
+import type { PartyT, QuestionT, BlocT, WildQuestionT, ConfidencePickT } from "@/lib/types";
 import { savePredictionAction } from "@/app/actions";
 import { formatDateTime } from "@/lib/clientTime";
+import KnessetArc from "@/components/KnessetArc";
 
 type Seats = Record<string, number>;
 type Answers = Record<string, string | number | boolean>;
@@ -16,9 +17,12 @@ export default function PredictionForm({
   deadline,
   parties,
   questions,
+  wildQuestion,
   blocs,
   initialSeats,
   initialAnswers,
+  initialConfidencePick,
+  initialWildAnswer,
   alreadySubmitted,
 }: {
   code: string;
@@ -27,9 +31,12 @@ export default function PredictionForm({
   deadline: string;
   parties: PartyT[];
   questions: QuestionT[];
+  wildQuestion: WildQuestionT;
   blocs: BlocT[];
   initialSeats: Seats;
   initialAnswers: Answers;
+  initialConfidencePick: ConfidencePickT;
+  initialWildAnswer: string | number | boolean | null;
   alreadySubmitted: boolean;
 }) {
   const router = useRouter();
@@ -39,6 +46,10 @@ export default function PredictionForm({
     return s;
   });
   const [answers, setAnswers] = useState<Answers>({ ...initialAnswers });
+  const [confidenceKey, setConfidenceKey] = useState(initialConfidencePick.partyKey || "");
+  const [wildAnswer, setWildAnswer] = useState<string>(
+    initialWildAnswer == null ? "" : String(initialWildAnswer),
+  );
   const [showSummary, setShowSummary] = useState(false);
   const [busy, setBusy] = useState<"draft" | "submit" | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -50,11 +61,10 @@ export default function PredictionForm({
   function setSeat(key: string, value: number) {
     const v = Math.max(0, Math.min(totalSeats, Math.floor(value || 0)));
     setSeats((s) => ({ ...s, [key]: v }));
+    if (v === 0 && confidenceKey === key) setConfidenceKey("");
     setMsg(null);
   }
-  function bump(key: string, delta: number) {
-    setSeat(key, (seats[key] ?? 0) + delta);
-  }
+  const bump = (key: string, delta: number) => setSeat(key, (seats[key] ?? 0) + delta);
 
   const blocTotals = useMemo(() => {
     const t: Record<string, number> = {};
@@ -63,16 +73,28 @@ export default function PredictionForm({
     return t;
   }, [seats, parties, blocs]);
 
-  const partiesIn = parties.filter((p) => (seats[p.key] ?? 0) >= thresholdSeats).length;
+  const listsIn = parties.filter((p) => (seats[p.key] ?? 0) > 0).length;
 
   async function save(submit: boolean) {
     if (submit && !valid) {
       setMsg({ kind: "err", text: `צריך לחלק בדיוק ${totalSeats} מנדטים` });
       return;
     }
+    if (submit && !confidenceKey) {
+      setMsg({ kind: "err", text: "בחרו ניחוש ביטחון אחד (⭐) לפני השליחה" });
+      return;
+    }
     setBusy(submit ? "submit" : "draft");
     setMsg(null);
-    const res = await savePredictionAction(code, { seats, answers, submit });
+    const res = await savePredictionAction(code, {
+      seats,
+      answers,
+      confidencePick: confidenceKey
+        ? { partyKey: confidenceKey, seats: seats[confidenceKey] ?? 0 }
+        : undefined,
+      wildAnswer: wildQuestion.enabled && wildAnswer ? wildAnswer : null,
+      submit,
+    });
     setBusy(null);
     if (!res.ok) {
       setMsg({ kind: "err", text: res.error ?? "שגיאה" });
@@ -83,41 +105,78 @@ export default function PredictionForm({
       router.push(`/g/${code}`);
       router.refresh();
     } else {
-      setMsg({ kind: "ok", text: "הטיוטה נשמרה" });
+      setMsg({ kind: "ok", text: "הטיוטה נשמרה ✓" });
     }
   }
 
+  const pct = Math.min(100, (total / totalSeats) * 100);
+
   return (
     <div className="space-y-4 pb-28">
+      {/* live Knesset map */}
+      <div className="card p-4">
+        <KnessetArc parties={parties} seats={seats} totalSeats={totalSeats} size={340} />
+        <div className="mt-2 grid grid-cols-3 gap-2 text-center text-sm">
+          {blocs.map((b) => (
+            <div key={b.key} className="rounded-lg bg-bg py-1.5">
+              <div className="text-[11px] font-bold text-muted">{b.labelHe}</div>
+              <div className="num text-lg font-black">{blocTotals[b.key] ?? 0}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 text-center text-xs text-muted">
+          {listsIn} רשימות עוברות את אחוז החסימה בתחזית שלך
+        </div>
+      </div>
+
       <div className="card p-4 text-sm text-muted">
-        חלקו בדיוק <b className="text-ink">{totalSeats}</b> מנדטים בין המפלגות. אפשר לשמור
-        טיוטה בכל שלב ולערוך עד {formatDateTime(deadline)}.
+        חלקו בדיוק <b className="text-ink">{totalSeats}</b> מנדטים. רשימה עם{" "}
+        <b className="text-ink">0</b> = ניחוש שהיא <b>לא</b> עוברת את אחוז החסימה. שמרו טיוטה
+        בכל שלב — אפשר לערוך עד {formatDateTime(deadline)}.
       </div>
 
       {/* seats */}
       <div className="grid gap-2 sm:grid-cols-2">
         {parties.map((p) => {
           const v = seats[p.key] ?? 0;
-          const passes = v >= thresholdSeats;
+          const enters = v > 0;
+          const near = v > 0 && v < thresholdSeats;
+          const isPick = confidenceKey === p.key;
           return (
-            <div key={p.key} className="card flex items-center gap-3 p-3">
+            <div
+              key={p.key}
+              className={`card flex items-center gap-2 p-3 transition ${
+                enters ? "" : "opacity-60"
+              } ${isPick ? "ring-2 ring-accent-500" : ""}`}
+            >
               <span
                 className="h-10 w-1.5 shrink-0 rounded-full"
-                style={{ background: p.color }}
+                style={{ background: enters ? p.color : "var(--color-line)" }}
               />
               <div className="min-w-0 flex-1">
-                <div className="truncate font-bold">{p.nameHe}</div>
-                <div className="text-xs text-muted">
-                  {p.name}
-                  {p.abbr && p.abbr !== "—" ? ` · ${p.abbr}` : ""}
-                  {v > 0 && (
-                    <span className={passes ? "text-good" : "text-bad"}>
-                      {" "}
-                      · {passes ? "עובר אחוז חסימה" : "מתחת לחסימה"}
-                    </span>
+                <div className="flex items-center gap-1 truncate font-bold">
+                  {p.nameHe}
+                  {p.ballotLetters && (
+                    <span className="text-[11px] font-normal text-muted">({p.ballotLetters})</span>
                   )}
                 </div>
+                <div className="text-xs text-muted">
+                  {p.leaderHe || p.name}
+                  {!enters && <span className="text-bad"> · לא עוברת</span>}
+                  {near && <span className="text-accent-500"> · קרוב לחסימה</span>}
+                </div>
               </div>
+              <button
+                type="button"
+                title="ניחוש הביטחון שלי"
+                disabled={!enters}
+                onClick={() => setConfidenceKey(isPick ? "" : p.key)}
+                className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-lg disabled:opacity-30 ${
+                  isPick ? "bg-accent-500 text-white" : "bg-bg"
+                }`}
+              >
+                ★
+              </button>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -130,6 +189,7 @@ export default function PredictionForm({
                 <input
                   className="field num w-14 !px-1 text-center font-black"
                   type="number"
+                  inputMode="numeric"
                   min={0}
                   max={totalSeats}
                   value={v === 0 ? "" : v}
@@ -150,21 +210,23 @@ export default function PredictionForm({
         })}
       </div>
 
-      {/* bloc + threshold readout */}
-      <div className="card grid gap-3 p-4 text-sm sm:grid-cols-3">
-        {blocs.map((b) => (
-          <div key={b.key}>
-            <div className="text-xs font-bold text-muted">{b.labelHe}</div>
-            <div className="num text-xl font-black">{blocTotals[b.key] ?? 0}</div>
-          </div>
-        ))}
-        <div>
-          <div className="text-xs font-bold text-muted">מפלגות שעוברות את החסימה</div>
-          <div className="num text-xl font-black">{partiesIn}</div>
-        </div>
+      {/* confidence pick summary */}
+      <div className="card p-4 text-sm">
+        <div className="font-bold">⭐ ניחוש הביטחון</div>
+        <p className="mt-1 text-muted">
+          {confidenceKey ? (
+            <>
+              אני הכי בטוח/ה ש<b className="text-ink">{partyName(parties, confidenceKey)}</b> תקבל{" "}
+              <b className="num text-ink">{seats[confidenceKey] ?? 0}</b> מנדטים. פגיעה מדויקת =
+              בונוס גדול.
+            </>
+          ) : (
+            "סמנו ★ ליד רשימה אחת שאתם הכי בטוחים לגבי מספר המנדטים שלה."
+          )}
+        </p>
       </div>
 
-      {/* questions */}
+      {/* bonus questions */}
       {questions.length > 0 && (
         <div className="card space-y-4 p-4">
           <h2 className="text-lg">שאלות בונוס</h2>
@@ -184,6 +246,37 @@ export default function PredictionForm({
         </div>
       )}
 
+      {/* wild prediction */}
+      {wildQuestion.enabled && (
+        <div className="card space-y-2 p-4">
+          <h2 className="text-lg">🎲 הניחוש הפראי</h2>
+          <label className="label">
+            {wildQuestion.textHe} <span className="text-brand-700">· {wildQuestion.points} נק׳</span>
+          </label>
+          {wildQuestion.options.length > 0 ? (
+            <select
+              className="field"
+              value={wildAnswer}
+              onChange={(e) => setWildAnswer(e.target.value)}
+            >
+              <option value="">— בחירה —</option>
+              {wildQuestion.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="field"
+              value={wildAnswer}
+              onChange={(e) => setWildAnswer(e.target.value)}
+              placeholder="התשובה שלך"
+            />
+          )}
+        </div>
+      )}
+
       {msg && (
         <p
           className={`rounded-lg px-3 py-2 text-sm font-bold ${
@@ -194,8 +287,14 @@ export default function PredictionForm({
         </p>
       )}
 
-      {/* sticky footer */}
+      {/* sticky footer with progress bar */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 backdrop-blur">
+        <div className="h-1.5 w-full bg-bg">
+          <div
+            className={`h-full transition-all ${valid ? "bg-good" : "bg-brand-500"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
         <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
           <div
             className={`num rounded-xl px-3 py-2 text-sm font-black ${
@@ -222,7 +321,7 @@ export default function PredictionForm({
             disabled={!valid || busy !== null}
             onClick={() => setShowSummary(true)}
           >
-            {alreadySubmitted ? "עדכון התחזית" : "שליחה"}
+            {alreadySubmitted ? "עדכון" : "שליחה"}
           </button>
         </div>
       </div>
@@ -231,9 +330,12 @@ export default function PredictionForm({
         <SummaryModal
           parties={parties}
           questions={questions}
+          wildQuestion={wildQuestion}
+          wildAnswer={wildAnswer}
           blocs={blocs}
           seats={seats}
           answers={answers}
+          confidenceKey={confidenceKey}
           total={total}
           onClose={() => setShowSummary(false)}
           onConfirm={() => save(true)}
@@ -242,6 +344,10 @@ export default function PredictionForm({
       )}
     </div>
   );
+}
+
+function partyName(parties: PartyT[], key: string) {
+  return parties.find((p) => p.key === key)?.nameHe ?? key;
 }
 
 function QuestionField({
@@ -261,6 +367,7 @@ function QuestionField({
     <div>
       <label className="label">
         {q.textHe} <span className="text-brand-700">· {q.points} נק׳</span>
+        {q.kind === "turnout" && <span className="text-muted"> · שובר שוויון</span>}
       </label>
       <div className="mt-1">
         {q.type === "party" && (
@@ -315,6 +422,7 @@ function QuestionField({
           <input
             className="field num w-32"
             type="number"
+            inputMode="decimal"
             min={0}
             value={value === undefined || value === "" ? "" : Number(value)}
             onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
@@ -328,9 +436,12 @@ function QuestionField({
 function SummaryModal({
   parties,
   questions,
+  wildQuestion,
+  wildAnswer,
   blocs,
   seats,
   answers,
+  confidenceKey,
   total,
   onClose,
   onConfirm,
@@ -338,9 +449,12 @@ function SummaryModal({
 }: {
   parties: PartyT[];
   questions: QuestionT[];
+  wildQuestion: WildQuestionT;
+  wildAnswer: string;
   blocs: BlocT[];
   seats: Seats;
   answers: Answers;
+  confidenceKey: string;
   total: number;
   onClose: () => void;
   onConfirm: () => void;
@@ -365,12 +479,10 @@ function SummaryModal({
     .map((p) => ({ p, v: seats[p.key] ?? 0 }))
     .filter((r) => r.v > 0)
     .sort((a, b) => b.v - a.v);
+  const failing = parties.filter((p) => (seats[p.key] ?? 0) === 0);
 
   return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-4" onClick={onClose}>
       <div
         className="card max-h-[85dvh] w-full max-w-lg overflow-y-auto p-6"
         onClick={(e) => e.stopPropagation()}
@@ -383,16 +495,20 @@ function SummaryModal({
           {sorted.map(({ p, v }) => (
             <li key={p.key} className="flex items-center justify-between">
               <span className="flex items-center gap-2">
-                <span
-                  className="h-3 w-3 rounded-full"
-                  style={{ background: p.color }}
-                />
+                <span className="h-3 w-3 rounded-full" style={{ background: p.color }} />
                 {p.nameHe}
+                {confidenceKey === p.key && <span>⭐</span>}
               </span>
               <span className="num font-black">{v}</span>
             </li>
           ))}
         </ul>
+
+        {failing.length > 0 && (
+          <p className="mt-2 text-xs text-muted">
+            לא עוברות את החסימה: {failing.map((p) => p.nameHe).join(", ")}
+          </p>
+        )}
 
         {questions.length > 0 && (
           <>
@@ -406,6 +522,17 @@ function SummaryModal({
               ))}
             </ul>
           </>
+        )}
+
+        {wildQuestion.enabled && (
+          <p className="mt-3 text-sm">
+            <span className="text-muted">🎲 {wildQuestion.textHe}: </span>
+            <b>
+              {wildQuestion.options.find((o) => o.value === wildAnswer)?.label ||
+                wildAnswer ||
+                "— (לא נענתה)"}
+            </b>
+          </p>
         )}
 
         <div className="mt-6 flex gap-2">

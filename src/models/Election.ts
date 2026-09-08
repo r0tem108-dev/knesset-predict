@@ -16,6 +16,8 @@ const ElectionSchema = new Schema(
     nameHe: { type: String, required: true },
     /** Official election day. Used for the public countdown. */
     electionDay: { type: Date, required: true },
+    /** Deadline for submitting candidate lists to the Central Elections Committee. */
+    listSubmissionDate: { type: Date, default: null },
     totalSeats: { type: Number, default: 120 },
     /** National electoral threshold, percent of valid votes. */
     thresholdPercent: { type: Number, default: 3.25 },

@@ -17,7 +17,6 @@ export default function CreateGroupForm({
   const [creatorName, setCreatorName] = useState("");
   const [password, setPassword] = useState("");
   const [deadline, setDeadline] = useState(toLocalInputValue(defaultDeadlineISO));
-  const [revealBefore, setRevealBefore] = useState(false);
   const [revealAfter, setRevealAfter] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +30,6 @@ export default function CreateGroupForm({
       creatorName,
       password: password || undefined,
       predictionDeadline: deadline ? fromLocalInputValue(deadline) : undefined,
-      revealPredictionsBeforeLock: revealBefore,
       revealPredictionsAfterLock: revealAfter,
     });
     if (!res.ok || !res.data) {
@@ -93,21 +91,17 @@ export default function CreateGroupForm({
 
       <fieldset className="rounded-xl border border-line p-3">
         <legend className="label px-1">חשיפת תחזיות</legend>
-        <label className="flex items-center gap-2 py-1 text-sm">
-          <input
-            type="checkbox"
-            checked={revealBefore}
-            onChange={(e) => setRevealBefore(e.target.checked)}
-          />
-          לאפשר לראות תחזיות של אחרים <b>לפני</b> הנעילה
-        </label>
+        <p className="py-1 text-xs text-muted">
+          עד הנעילה אף אחד לא רואה תחזיות של אחרים — רק מי הצטרף ומי שלח. עם
+          הנעילה נפתח <b>מצב החשיפה</b>: כל התחזיות נחשפות יחד.
+        </p>
         <label className="flex items-center gap-2 py-1 text-sm">
           <input
             type="checkbox"
             checked={revealAfter}
             onChange={(e) => setRevealAfter(e.target.checked)}
           />
-          לאפשר טבלת השוואה <b>אחרי</b> הנעילה
+          לאפשר השוואת תחזיות ותחזית קבוצתית אחרי הנעילה
         </label>
       </fieldset>
 

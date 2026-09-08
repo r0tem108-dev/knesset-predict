@@ -2,48 +2,65 @@ import { Election } from "@/models/Election";
 import { Party } from "@/models/Party";
 
 /**
- * Seed definition for the first supported election. Everything here is data —
- * a future multi-election version would add more of these and drop the
- * "default election" assumption.
+ * Seed definition for the 26th Knesset election (27 October 2026).
+ *
+ * Everything here is DATA. A group admin can correct any of it from the admin
+ * "מפלגות" tab, and a future election is just another entry — nothing downstream
+ * hard-codes a party name.
+ *
+ * ⚠️  The list below is a best-effort snapshot from around the list-submission
+ * deadline (8 Sep 2026). Ballot letters and final rosters were still being
+ * confirmed; admins should verify against the Central Elections Committee and
+ * fix names / letters / status in the admin screen.
  */
 
 export const DEFAULT_ELECTION_SLUG =
   process.env.DEFAULT_ELECTION_SLUG?.trim() || "knesset-26";
 
 const BLOCS = [
-  { key: "right", label: "Right / religious bloc", labelHe: "גוש הימין והחרדים" },
-  {
-    key: "center_left_arab",
-    label: "Center-left & Arab bloc",
-    labelHe: "גוש המרכז-שמאל והערבים",
-  },
+  { key: "right", label: "Right / religious bloc", labelHe: "הגוש הימני-חרדי" },
+  { key: "center_left", label: "Center-left bloc", labelHe: "גוש המרכז-שמאל" },
+  { key: "arab", label: "Arab parties", labelHe: "המפלגות הערביות" },
 ];
 
 interface SeedParty {
   key: string;
   name: string;
   nameHe: string;
-  abbr: string;
+  commonNameHe?: string;
+  ballotLetters?: string;
+  leaderHe?: string;
   color: string;
   bloc: string;
 }
 
-// Based on the parties active around the 25th Knesset, projected forward. This is
-// sample data for the game — group admins can adjust it later per election.
+// 26th Knesset submitted lists (best-effort, verify in admin).
 const PARTIES: SeedParty[] = [
-  { key: "likud", name: "Likud", nameHe: "הליכוד", abbr: "מחל", color: "#1d4e89", bloc: "right" },
-  { key: "yesh_atid", name: "Yesh Atid", nameHe: "יש עתיד", abbr: "פה", color: "#00a3e0", bloc: "center_left_arab" },
-  { key: "national_unity", name: "National Unity", nameHe: "המחנה הממלכתי", abbr: "כן", color: "#164e78", bloc: "center_left_arab" },
-  { key: "shas", name: "Shas", nameHe: 'ש"ס', abbr: "שס", color: "#1b1b1b", bloc: "right" },
-  { key: "utj", name: "United Torah Judaism", nameHe: "יהדות התורה", abbr: "ג", color: "#20315c", bloc: "right" },
-  { key: "yisrael_beiteinu", name: "Yisrael Beiteinu", nameHe: "ישראל ביתנו", abbr: "ל", color: "#d81f26", bloc: "center_left_arab" },
-  { key: "religious_zionism", name: "Religious Zionism", nameHe: "הציונות הדתית", abbr: "ט", color: "#4b2e83", bloc: "right" },
-  { key: "otzma_yehudit", name: "Otzma Yehudit", nameHe: "עוצמה יהודית", abbr: "טב", color: "#3a3a3a", bloc: "right" },
-  { key: "democrats", name: "The Democrats", nameHe: "הדמוקרטים", abbr: "אמת", color: "#009639", bloc: "center_left_arab" },
-  { key: "hadash_taal", name: "Hadash-Ta'al", nameHe: 'חד"ש-תע"ל', abbr: "ום", color: "#e4002b", bloc: "center_left_arab" },
-  { key: "raam", name: "Ra'am", nameHe: 'רע"ם', abbr: "עם", color: "#007a33", bloc: "center_left_arab" },
-  { key: "balad", name: "Balad", nameHe: 'בל"ד', abbr: "ד", color: "#00693c", bloc: "center_left_arab" },
-  { key: "bennett", name: "Bennett 2026", nameHe: "בנט 2026", abbr: "—", color: "#59c1bd", bloc: "center_left_arab" },
+  // --- right / religious ---
+  { key: "likud", name: "Likud", nameHe: "הליכוד", ballotLetters: "מחל", leaderHe: "בנימין נתניהו", color: "#1d4e89", bloc: "right" },
+  { key: "shas", name: "Shas", nameHe: 'ש"ס', ballotLetters: "שס", leaderHe: "אריה דרעי", color: "#111111", bloc: "right" },
+  { key: "utj", name: "United Torah Judaism", nameHe: "יהדות התורה", ballotLetters: "ג", leaderHe: "", color: "#20315c", bloc: "right" },
+  { key: "religious_zionism", name: "Religious Zionism", nameHe: "הציונות הדתית", ballotLetters: "ט", leaderHe: "בצלאל סמוטריץ'", color: "#4b2e83", bloc: "right" },
+  { key: "otzma_yehudit", name: "Otzma Yehudit", nameHe: "עוצמה יהודית", ballotLetters: "נץ", leaderHe: "איתמר בן גביר", color: "#2b2b2b", bloc: "right" },
+  { key: "new_hope", name: "New Hope", nameHe: "תקווה חדשה", leaderHe: "גדעון סער", color: "#2f6fed", bloc: "right" },
+
+  // --- center-left ---
+  { key: "yashar", name: "Yashar", nameHe: "ישר", ballotLetters: "דרך", leaderHe: "", color: "#e07a2c", bloc: "center_left" },
+  { key: "beyachad", name: "Beyachad (Together)", nameHe: "ביחד", leaderHe: "נפתלי בנט", color: "#16a3b3", bloc: "center_left" },
+  { key: "democrats", name: "The Democrats", nameHe: "הדמוקרטים", ballotLetters: "אמת", leaderHe: "יאיר גולן", color: "#0aa060", bloc: "center_left" },
+  { key: "yisrael_beiteinu", name: "Yisrael Beiteinu", nameHe: "ישראל ביתנו", ballotLetters: "ל", leaderHe: "אביגדור ליברמן", color: "#d61f26", bloc: "center_left" },
+  { key: "blue_white", name: "Blue and White", nameHe: "כחול לבן", leaderHe: "בני גנץ", color: "#0b4ea2", bloc: "center_left" },
+
+  // --- Arab parties ---
+  { key: "hadash_taal", name: "Hadash-Ta'al", nameHe: 'חד"ש-תע"ל', ballotLetters: "ום", leaderHe: "", color: "#d4001a", bloc: "arab" },
+  { key: "raam", name: "Ra'am", nameHe: 'רע"ם', ballotLetters: "עם", leaderHe: "מנסור עבאס", color: "#0b7a3b", bloc: "arab" },
+  { key: "balad", name: "Balad", nameHe: 'בל"ד', leaderHe: "סאמי אבו שחאדה", color: "#00694a", bloc: "arab" },
+
+  // --- smaller lists (unlikely to cross the threshold) ---
+  { key: "amcha_yisrael", name: "Amcha Yisrael", nameHe: "עמך ישראל", color: "#7c3aed", bloc: "" },
+  { key: "reservists", name: "The Reservists", nameHe: "המילואימניקים", color: "#556b2f", bloc: "" },
+  { key: "pirates", name: "Pirates", nameHe: "הפיראטים", color: "#3a3a3a", bloc: "" },
+  { key: "economic_party", name: "Economic Party", nameHe: "המפלגה הכלכלית", color: "#b8860b", bloc: "" },
 ];
 
 export interface SeedResult {
@@ -53,8 +70,7 @@ export interface SeedResult {
 }
 
 /**
- * Idempotent. Called lazily on first DB use so the app works out of the box,
- * and also by `npm run seed`.
+ * Idempotent. Called lazily on first DB use so the app works out of the box.
  */
 export async function ensureSeeded(): Promise<SeedResult> {
   let election = await Election.findOne({ slug: DEFAULT_ELECTION_SLUG });
@@ -65,8 +81,8 @@ export async function ensureSeeded(): Promise<SeedResult> {
       slug: DEFAULT_ELECTION_SLUG,
       name: "26th Knesset Election",
       nameHe: "הבחירות לכנסת ה-26",
-      // Latest legal date for the next election; adjust when a date is set.
       electionDay: new Date("2026-10-27T00:00:00+03:00"),
+      listSubmissionDate: new Date("2026-09-08T22:00:00+03:00"),
       totalSeats: 120,
       thresholdPercent: 3.25,
       thresholdSeats: 4,
@@ -74,12 +90,22 @@ export async function ensureSeeded(): Promise<SeedResult> {
       blocs: BLOCS,
     });
     created = true;
+  } else if (!election.listSubmissionDate) {
+    election.listSubmissionDate = new Date("2026-09-08T22:00:00+03:00");
+    election.set("blocs", BLOCS);
+    await election.save();
   }
 
   const existing = await Party.countDocuments({ electionId: election._id });
   if (existing === 0) {
     await Party.insertMany(
-      PARTIES.map((p, i) => ({ ...p, electionId: election!._id, order: i + 1 })),
+      PARTIES.map((p, i) => ({
+        ...p,
+        commonNameHe: p.commonNameHe ?? "",
+        electionId: election!._id,
+        status: "active",
+        order: i + 1,
+      })),
     );
   }
 

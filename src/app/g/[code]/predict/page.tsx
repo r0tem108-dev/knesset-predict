@@ -60,9 +60,12 @@ export default async function PredictPage({
           deadline={group.predictionDeadline}
           parties={parties}
           questions={group.questions.filter((q) => q.enabled)}
+          wildQuestion={group.wildQuestion}
           blocs={election.blocs}
           initialSeats={myPrediction?.seats ?? {}}
           initialAnswers={myPrediction?.answers ?? {}}
+          initialConfidencePick={myPrediction?.confidencePick ?? { partyKey: "", seats: 0 }}
+          initialWildAnswer={myPrediction?.wildAnswer ?? null}
           alreadySubmitted={Boolean(myPrediction?.submitted)}
         />
       )}

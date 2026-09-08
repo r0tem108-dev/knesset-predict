@@ -26,16 +26,33 @@ export const QuestionSchema = new Schema(
      * seat results instead of being entered by hand.
      *   largestParty          -> party key with the most seats
      *   blocWinner            -> bloc key with the most combined seats
-     *   partyCount            -> number of parties at/above the threshold
-     *   anyPartyBelowThreshold-> boolean: did a party that ran fail the threshold
+     *   partyCount            -> number of lists that entered the Knesset
+     *   anyPartyBelowThreshold-> boolean: did a list that ran fail the threshold
      */
     autoResolve: {
       type: String,
       enum: ["largestParty", "blocWinner", "partyCount", "anyPartyBelowThreshold", ""],
       default: "",
     },
+    /** "turnout" questions are treated as the tie-breaker (closest wins ties). */
+    kind: { type: String, enum: ["", "turnout"], default: "" },
     enabled: { type: Boolean, default: true },
     order: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
+/**
+ * The "Wild Prediction" — one free-form question the admin writes, with custom
+ * answer options, resolved by hand after the election.
+ */
+const WildQuestionSchema = new Schema(
+  {
+    enabled: { type: Boolean, default: false },
+    text: { type: String, default: "" },
+    textHe: { type: String, default: "" },
+    options: { type: [{ value: String, label: String }], default: [] },
+    points: { type: Number, default: 15 },
   },
   { _id: false },
 );
@@ -63,19 +80,30 @@ const ScoringConfigSchema = new Schema(
     /** For "linear": points = max(0, base - slope * error). */
     linearBase: { type: Number, default: 10 },
     linearSlope: { type: Number, default: 2 },
-    /** Extra points added for every exactly-correct party. */
+    /** Extra points added for every exactly-correct list that entered the Knesset. */
     exactBonus: { type: Number, default: 0 },
-    /** Points per party whose "passed threshold?" status is predicted correctly. */
-    thresholdPoints: { type: Number, default: 0 },
+    /** Bonus for correctly predicting a list DOES cross the threshold. */
+    thresholdEnterPoints: { type: Number, default: 2 },
+    /** Bonus for correctly predicting a list does NOT cross the threshold. */
+    thresholdFailPoints: { type: Number, default: 2 },
+    /**
+     * Penalty per seat assigned to a list that ultimately got 0. Predicting 1
+     * seat for a party that fails costs 1x; predicting 7 costs 7x. Applied only
+     * when the list actually failed the threshold.
+     */
+    failedListSeatPenaltyPerSeat: { type: Number, default: 1 },
+    /** Bonus if the Confidence Pick seat prediction is exactly right. */
+    confidencePickBonus: { type: Number, default: 10 },
   },
   { _id: false },
 );
 
 const GroupSettingsSchema = new Schema(
   {
-    /** Participants can see each other's predictions before the deadline. */
-    revealPredictionsBeforeLock: { type: Boolean, default: false },
-    /** Participants can see each other's predictions after lock. */
+    /**
+     * Show everyone's predictions after lock (Reveal Mode). Predictions are
+     * ALWAYS hidden before lock — that is not configurable.
+     */
     revealPredictionsAfterLock: { type: Boolean, default: true },
   },
   { _id: false },
@@ -96,8 +124,11 @@ const GroupSchema = new Schema(
     settings: { type: GroupSettingsSchema, default: () => ({}) },
     scoring: { type: ScoringConfigSchema, default: () => ({}) },
     questions: { type: [QuestionSchema], default: [] },
-    /** Set once an admin has entered official results and scores are live. */
+    wildQuestion: { type: WildQuestionSchema, default: () => ({}) },
+    /** Set once an admin publishes results (provisional or final) and scores go live. */
     resultsPublishedAt: { type: Date, default: null },
+    /** Set once the admin marks the official results FINAL. */
+    resultsFinalizedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

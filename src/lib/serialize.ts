@@ -1,4 +1,13 @@
-import type { ElectionT, PartyT, GroupT, ParticipantT, PredictionT, QuestionT } from "./types";
+import type {
+  ElectionT,
+  PartyT,
+  GroupT,
+  GroupStatus,
+  ParticipantT,
+  PredictionT,
+  QuestionT,
+  WildQuestionT,
+} from "./types";
 
 type AnyDoc = Record<string, unknown>;
 
@@ -21,6 +30,7 @@ export function serializeElection(e: AnyDoc): ElectionT {
     name: e.name as string,
     nameHe: e.nameHe as string,
     electionDay: iso(e.electionDay),
+    listSubmissionDate: isoOrNull(e.listSubmissionDate),
     totalSeats: (e.totalSeats as number) ?? 120,
     thresholdPercent: (e.thresholdPercent as number) ?? 3.25,
     thresholdSeats: (e.thresholdSeats as number) ?? 4,
@@ -39,10 +49,13 @@ export function serializeParty(p: AnyDoc): PartyT {
     key: p.key as string,
     name: p.name as string,
     nameHe: p.nameHe as string,
-    abbr: (p.abbr as string) ?? "",
+    commonNameHe: (p.commonNameHe as string) ?? "",
+    ballotLetters: (p.ballotLetters as string) ?? (p.abbr as string) ?? "",
+    leaderHe: (p.leaderHe as string) ?? "",
     color: (p.color as string) ?? "#64748b",
     logoUrl: (p.logoUrl as string) ?? "",
     bloc: (p.bloc as string) ?? "",
+    status: ((p.status as PartyT["status"]) ?? "active"),
     order: (p.order as number) ?? 0,
   };
 }
@@ -59,8 +72,23 @@ export function serializeQuestion(q: AnyDoc): QuestionT {
     })),
     points: (q.points as number) ?? 0,
     autoResolve: (q.autoResolve as QuestionT["autoResolve"]) ?? "",
+    kind: (q.kind as QuestionT["kind"]) ?? "",
     enabled: (q.enabled as boolean) ?? true,
     order: (q.order as number) ?? 0,
+  };
+}
+
+function serializeWild(w: AnyDoc | undefined): WildQuestionT {
+  const x = w ?? {};
+  return {
+    enabled: Boolean(x.enabled),
+    text: (x.text as string) ?? "",
+    textHe: (x.textHe as string) ?? "",
+    options: ((x.options as AnyDoc[]) ?? []).map((o) => ({
+      value: o.value as string,
+      label: o.label as string,
+    })),
+    points: (x.points as number) ?? 15,
   };
 }
 
@@ -70,6 +98,15 @@ export function serializeGroup(g: AnyDoc): GroupT {
   const locked = Boolean(g.lockedAt) || now >= deadline;
   const s = (g.settings as AnyDoc) ?? {};
   const sc = (g.scoring as AnyDoc) ?? {};
+
+  const status: GroupStatus = g.resultsFinalizedAt
+    ? "final"
+    : g.resultsPublishedAt
+      ? "provisional"
+      : locked
+        ? "locked"
+        : "open";
+
   return {
     id: String(g._id),
     code: g.code as string,
@@ -79,9 +116,10 @@ export function serializeGroup(g: AnyDoc): GroupT {
     predictionDeadline: iso(g.predictionDeadline),
     lockedAt: isoOrNull(g.lockedAt),
     locked,
+    status,
     resultsPublishedAt: isoOrNull(g.resultsPublishedAt),
+    resultsFinalizedAt: isoOrNull(g.resultsFinalizedAt),
     settings: {
-      revealPredictionsBeforeLock: Boolean(s.revealPredictionsBeforeLock),
       revealPredictionsAfterLock: s.revealPredictionsAfterLock !== false,
     },
     scoring: {
@@ -93,11 +131,15 @@ export function serializeGroup(g: AnyDoc): GroupT {
       linearBase: (sc.linearBase as number) ?? 10,
       linearSlope: (sc.linearSlope as number) ?? 2,
       exactBonus: (sc.exactBonus as number) ?? 0,
-      thresholdPoints: (sc.thresholdPoints as number) ?? 0,
+      thresholdEnterPoints: (sc.thresholdEnterPoints as number) ?? 2,
+      thresholdFailPoints: (sc.thresholdFailPoints as number) ?? 2,
+      failedListSeatPenaltyPerSeat: (sc.failedListSeatPenaltyPerSeat as number) ?? 1,
+      confidencePickBonus: (sc.confidencePickBonus as number) ?? 10,
     },
     questions: ((g.questions as AnyDoc[]) ?? [])
       .map(serializeQuestion)
       .sort((a, b) => a.order - b.order),
+    wildQuestion: serializeWild(g.wildQuestion as AnyDoc),
     createdAt: iso(g.createdAt),
   };
 }
@@ -112,22 +154,32 @@ export function serializeParticipant(p: AnyDoc): ParticipantT {
 }
 
 export function serializePrediction(p: AnyDoc | null, participantId: string): PredictionT {
+  const cp = (p?.confidencePick as AnyDoc) ?? {};
   if (!p) {
     return {
       participantId,
       seats: {},
       answers: {},
+      confidencePick: { partyKey: "", seats: 0 },
+      wildAnswer: null,
       submitted: false,
       submittedAt: null,
       updatedAt: null,
+      revision: 0,
     };
   }
   return {
     participantId: String(p.participantId),
     seats: mapToObj<number>(p.seats),
     answers: mapToObj<string | number | boolean>(p.answers),
+    confidencePick: {
+      partyKey: (cp.partyKey as string) ?? "",
+      seats: (cp.seats as number) ?? 0,
+    },
+    wildAnswer: (p.wildAnswer as string | number | boolean | null) ?? null,
     submitted: Boolean(p.submitted),
     submittedAt: isoOrNull(p.submittedAt),
     updatedAt: isoOrNull(p.updatedAt),
+    revision: (p.revision as number) ?? 0,
   };
 }

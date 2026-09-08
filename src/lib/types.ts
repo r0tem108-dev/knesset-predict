@@ -12,6 +12,7 @@ export interface ElectionT {
   name: string;
   nameHe: string;
   electionDay: string; // ISO
+  listSubmissionDate: string | null;
   totalSeats: number;
   thresholdPercent: number;
   thresholdSeats: number;
@@ -24,10 +25,13 @@ export interface PartyT {
   key: string;
   name: string;
   nameHe: string;
-  abbr: string;
+  commonNameHe: string;
+  ballotLetters: string;
+  leaderHe: string;
   color: string;
   logoUrl: string;
   bloc: string;
+  status: "active" | "withdrawn" | "disqualified";
   order: number;
 }
 
@@ -39,8 +43,17 @@ export interface QuestionT {
   options: { value: string; label: string }[];
   points: number;
   autoResolve: "" | "largestParty" | "blocWinner" | "partyCount" | "anyPartyBelowThreshold";
+  kind: "" | "turnout";
   enabled: boolean;
   order: number;
+}
+
+export interface WildQuestionT {
+  enabled: boolean;
+  text: string;
+  textHe: string;
+  options: { value: string; label: string }[];
+  points: number;
 }
 
 export interface ScoreTierT {
@@ -54,13 +67,17 @@ export interface ScoringT {
   linearBase: number;
   linearSlope: number;
   exactBonus: number;
-  thresholdPoints: number;
+  thresholdEnterPoints: number;
+  thresholdFailPoints: number;
+  failedListSeatPenaltyPerSeat: number;
+  confidencePickBonus: number;
 }
 
 export interface GroupSettingsT {
-  revealPredictionsBeforeLock: boolean;
   revealPredictionsAfterLock: boolean;
 }
+
+export type GroupStatus = "open" | "locked" | "provisional" | "final";
 
 export interface GroupT {
   id: string;
@@ -71,10 +88,13 @@ export interface GroupT {
   predictionDeadline: string; // ISO
   lockedAt: string | null;
   locked: boolean;
+  status: GroupStatus;
   resultsPublishedAt: string | null;
+  resultsFinalizedAt: string | null;
   settings: GroupSettingsT;
   scoring: ScoringT;
   questions: QuestionT[];
+  wildQuestion: WildQuestionT;
   createdAt: string;
 }
 
@@ -85,13 +105,21 @@ export interface ParticipantT {
   joinedAt: string;
 }
 
+export interface ConfidencePickT {
+  partyKey: string;
+  seats: number;
+}
+
 export interface PredictionT {
   participantId: string;
   seats: Record<string, number>;
   answers: Record<string, string | number | boolean>;
+  confidencePick: ConfidencePickT;
+  wildAnswer: string | number | boolean | null;
   submitted: boolean;
   submittedAt: string | null;
   updatedAt: string | null;
+  revision: number;
 }
 
 export interface ViewerT {
@@ -106,9 +134,38 @@ export interface LeaderRowT {
   total: number;
   seatScore: number;
   bonusScore: number;
+  confidencePickAwarded: number;
+  totalSeatError: number;
   avgError: number;
   exactCount: number;
+  offByOneCount: number;
+  thresholdCorrectCount: number;
+  turnoutDelta: number | null;
+  worstError: number;
+  worstPartyKey: string;
+  /** award flags */
   isFirst: boolean;
-  isMostAccurate: boolean;
-  isMostExact: boolean;
+  isOracle: boolean;
+  isBullseye: boolean;
+  isClosestKnesset: boolean;
+  isThresholdMaster: boolean;
+  isContrarianGenius: boolean;
+  isBiggestMiss: boolean;
+}
+
+export interface ComparisonRowT {
+  participantId: string;
+  displayName: string;
+  seats: Record<string, number>;
+  answers: Record<string, string | number | boolean>;
+  confidencePick: ConfidencePickT;
+  wildAnswer: string | number | boolean | null;
+  totalSeats: number;
+}
+
+export interface GroupForecastT {
+  /** party key -> consensus seats (integers summing to totalSeats) */
+  seats: Record<string, number>;
+  /** party key -> raw average before rounding */
+  averages: Record<string, number>;
 }

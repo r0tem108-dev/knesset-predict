@@ -1,8 +1,11 @@
 import mongoose, { Schema, model, models, type InferSchemaType } from "mongoose";
 
 /**
- * Official election results, entered by a group admin. Stored per-group so each
- * group controls its own result entry and question resolution.
+ * Official election results, entered by a group admin. One doc per group.
+ *
+ * `stage` moves provisional -> final:
+ *   provisional : Election-Night numbers; leaderboard shows "if these were final…"
+ *   final       : locked-in official results; final leaderboard + awards
  */
 const OfficialResultSchema = new Schema(
   {
@@ -13,6 +16,7 @@ const OfficialResultSchema = new Schema(
       unique: true,
       index: true,
     },
+    stage: { type: String, enum: ["provisional", "final"], default: "provisional" },
     /** party key -> actual seats. */
     seats: { type: Map, of: Number, default: {} },
     /**
@@ -20,7 +24,13 @@ const OfficialResultSchema = new Schema(
      * without an autoResolve rule; auto ones are computed at scoring time.
      */
     answers: { type: Map, of: Schema.Types.Mixed, default: {} },
+    /** Correct answer to the Wild Prediction question. */
+    wildAnswer: { type: Schema.Types.Mixed, default: null },
+    /** National voter turnout %, used for the turnout tie-breaker. */
+    turnoutPercent: { type: Number, default: null },
     enteredBy: { type: String, default: "" },
+    /** Bumped on every Election-Night update so callers can tell it changed. */
+    revision: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
