@@ -1,0 +1,630 @@
+import "server-only";
+import bcrypt from "bcryptjs";
+import { connectDB } from "./db";
+import { ensureSeeded, DEFAULT_ELECTION_SLUG } from "./seedData";
+import { Election } from "@/models/Election";
+import { Party } from "@/models/Party";
+import { Group } from "@/models/Group";
+import { Participant } from "@/models/Participant";
+import { Prediction } from "@/models/Prediction";
+import { OfficialResult } from "@/models/OfficialResult";
+import { newGroupCode, newToken } from "./codes";
+import { defaultQuestions } from "./questionTemplates";
+import {
+  serializeElection,
+  serializeParty,
+  serializeGroup,
+  serializeParticipant,
+  serializePrediction,
+  mapToObj,
+} from "./serialize";
+import type {
+  ElectionT,
+  PartyT,
+  GroupT,
+  ParticipantT,
+  PredictionT,
+  ViewerT,
+  LeaderRowT,
+} from "./types";
+import {
+  scoreParticipant,
+  resolveAutoAnswer,
+  type PartyLite,
+  type QuestionLite,
+  type ScoringConfig,
+} from "./scoring";
+import { getParticipantToken, getAdminToken } from "./session";
+
+export class AppError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function ready() {
+  await connectDB();
+  await ensureSeeded();
+}
+
+/* --------------------------------------------------------------- election -- */
+
+export interface ElectionBundle {
+  election: ElectionT;
+  parties: PartyT[];
+}
+
+export async function getDefaultElection(): Promise<ElectionBundle> {
+  await ready();
+  const election = await Election.findOne({ slug: DEFAULT_ELECTION_SLUG }).lean();
+  if (!election) throw new AppError("Default election not found", 500);
+  const parties = await Party.find({ electionId: election._id }).sort({ order: 1 }).lean();
+  return {
+    election: serializeElection(election),
+    parties: parties.map(serializeParty),
+  };
+}
+
+/* ------------------------------------------------------------------ group -- */
+
+export interface CreateGroupInput {
+  name: string;
+  creatorName: string;
+  password?: string;
+  predictionDeadline?: string;
+  revealPredictionsBeforeLock?: boolean;
+  revealPredictionsAfterLock?: boolean;
+}
+
+export interface CreateGroupResult {
+  group: GroupT;
+  adminToken: string;
+  participantToken: string;
+}
+
+export async function createGroup(input: CreateGroupInput): Promise<CreateGroupResult> {
+  await ready();
+  const name = input.name?.trim();
+  const creatorName = input.creatorName?.trim();
+  if (!name) throw new AppError("Group name is required");
+  if (!creatorName) throw new AppError("Your name is required");
+
+  const { election } = await getDefaultElection();
+  const deadline = input.predictionDeadline
+    ? new Date(input.predictionDeadline)
+    : new Date(new Date(election.electionDay).getTime() - 12 * 60 * 60 * 1000);
+  if (Number.isNaN(deadline.getTime())) throw new AppError("Invalid prediction deadline");
+
+  const adminToken = newToken();
+  const participantToken = newToken();
+
+  // Retry on the (astronomically unlikely) code collision.
+  let group = null;
+  for (let i = 0; i < 5 && !group; i++) {
+    try {
+      group = await Group.create({
+        electionId: election.id,
+        code: newGroupCode(),
+        name,
+        creatorName,
+        passwordHash: input.password ? await bcrypt.hash(input.password, 10) : "",
+        adminToken,
+        predictionDeadline: deadline,
+        settings: {
+          revealPredictionsBeforeLock: Boolean(input.revealPredictionsBeforeLock),
+          revealPredictionsAfterLock: input.revealPredictionsAfterLock !== false,
+        },
+        questions: defaultQuestions(election.blocs),
+      });
+    } catch (err: unknown) {
+      if ((err as { code?: number }).code === 11000) continue;
+      throw err;
+    }
+  }
+  if (!group) throw new AppError("Could not allocate a group code, try again", 500);
+
+  const participant = await Participant.create({
+    groupId: group._id,
+    displayName: creatorName,
+    token: participantToken,
+    isAdmin: true,
+  });
+  await Prediction.create({ groupId: group._id, participantId: participant._id });
+
+  return {
+    group: serializeGroup(group.toObject()),
+    adminToken,
+    participantToken,
+  };
+}
+
+async function loadGroup(code: string) {
+  await ready();
+  const group = await Group.findOne({ code: code.toUpperCase().trim() });
+  if (!group) throw new AppError("Group not found", 404);
+  return group;
+}
+
+export async function getGroup(code: string): Promise<GroupT> {
+  const group = await loadGroup(code);
+  return serializeGroup(group.toObject());
+}
+
+export function isLocked(group: GroupT): boolean {
+  return group.locked;
+}
+
+/* ------------------------------------------------------------------- join -- */
+
+export interface JoinResult {
+  participant: ParticipantT;
+  participantToken: string;
+  alreadyMember: boolean;
+}
+
+export async function joinGroup(
+  code: string,
+  displayName: string,
+  password?: string,
+): Promise<JoinResult> {
+  const group = await loadGroup(code);
+
+  const existingToken = await getParticipantToken(group.code);
+  if (existingToken) {
+    const existing = await Participant.findOne({ groupId: group._id, token: existingToken });
+    if (existing) {
+      return {
+        participant: serializeParticipant(existing.toObject()),
+        participantToken: existingToken,
+        alreadyMember: true,
+      };
+    }
+  }
+
+  if (group.passwordHash) {
+    const ok = password ? await bcrypt.compare(password, group.passwordHash) : false;
+    if (!ok) throw new AppError("Incorrect group password", 401);
+  }
+
+  const name = displayName?.trim();
+  if (!name) throw new AppError("Display name is required");
+
+  const clash = await Participant.findOne({ groupId: group._id, displayName: name });
+  if (clash) throw new AppError("That display name is already taken in this group", 409);
+
+  const token = newToken();
+  const participant = await Participant.create({
+    groupId: group._id,
+    displayName: name,
+    token,
+    isAdmin: false,
+  });
+  await Prediction.create({ groupId: group._id, participantId: participant._id });
+
+  return {
+    participant: serializeParticipant(participant.toObject()),
+    participantToken: token,
+    alreadyMember: false,
+  };
+}
+
+/* ----------------------------------------------------------------- viewer -- */
+
+export async function getViewer(code: string): Promise<ViewerT> {
+  const group = await loadGroup(code);
+  const token = await getParticipantToken(group.code);
+  const adminToken = await getAdminToken(group.code);
+  const isAdmin = Boolean(adminToken) && adminToken === group.adminToken;
+
+  let participant: ParticipantT | null = null;
+  if (token) {
+    const p = await Participant.findOne({ groupId: group._id, token });
+    if (p) participant = serializeParticipant(p.toObject());
+  }
+  return { participant, isAdmin: isAdmin || Boolean(participant?.isAdmin) };
+}
+
+async function requireAdmin(code: string) {
+  const group = await loadGroup(code);
+  const adminToken = await getAdminToken(group.code);
+  if (!adminToken || adminToken !== group.adminToken) {
+    throw new AppError("Admin access required", 403);
+  }
+  return group;
+}
+
+async function requireParticipant(code: string) {
+  const group = await loadGroup(code);
+  const token = await getParticipantToken(group.code);
+  if (!token) throw new AppError("Join the group first", 401);
+  const participant = await Participant.findOne({ groupId: group._id, token });
+  if (!participant) throw new AppError("Join the group first", 401);
+  return { group, participant };
+}
+
+/* ------------------------------------------------------------- prediction -- */
+
+export async function getMyPrediction(code: string): Promise<PredictionT | null> {
+  const group = await loadGroup(code);
+  const token = await getParticipantToken(group.code);
+  if (!token) return null;
+  const participant = await Participant.findOne({ groupId: group._id, token });
+  if (!participant) return null;
+  const pred = await Prediction.findOne({
+    groupId: group._id,
+    participantId: participant._id,
+  }).lean();
+  return serializePrediction(pred, String(participant._id));
+}
+
+export interface SavePredictionInput {
+  seats: Record<string, number>;
+  answers: Record<string, string | number | boolean>;
+  submit: boolean;
+}
+
+export async function savePrediction(
+  code: string,
+  input: SavePredictionInput,
+): Promise<PredictionT> {
+  const { group, participant } = await requireParticipant(code);
+  const gT = serializeGroup(group.toObject());
+  if (gT.locked) throw new AppError("Predictions are locked for this group", 403);
+
+  const { election, parties } = await getDefaultElection();
+  const partyKeys = new Set(parties.map((p) => p.key));
+
+  const seats: Record<string, number> = {};
+  let total = 0;
+  for (const [key, raw] of Object.entries(input.seats ?? {})) {
+    if (!partyKeys.has(key)) continue;
+    const v = Math.floor(Number(raw));
+    if (Number.isNaN(v) || v < 0 || v > election.totalSeats) {
+      throw new AppError(`Invalid seat value for ${key}`);
+    }
+    seats[key] = v;
+    total += v;
+  }
+
+  if (input.submit && total !== election.totalSeats) {
+    throw new AppError(
+      `Seats must total exactly ${election.totalSeats} to submit (currently ${total})`,
+    );
+  }
+
+  const answers: Record<string, string | number | boolean> = {};
+  const qById = new Map(gT.questions.map((q) => [q.qid, q]));
+  for (const [qid, raw] of Object.entries(input.answers ?? {})) {
+    const q = qById.get(qid);
+    if (!q || !q.enabled) continue;
+    if (raw === "" || raw === null || raw === undefined) continue;
+    if (q.type === "number") answers[qid] = Math.floor(Number(raw));
+    else if (q.type === "boolean") answers[qid] = raw === true || raw === "true";
+    else answers[qid] = String(raw);
+  }
+
+  const pred = await Prediction.findOneAndUpdate(
+    { groupId: group._id, participantId: participant._id },
+    {
+      $set: {
+        seats,
+        answers,
+        submitted: input.submit,
+        submittedAt: input.submit ? new Date() : null,
+      },
+    },
+    { new: true, upsert: true },
+  ).lean();
+
+  return serializePrediction(pred, String(participant._id));
+}
+
+/* --------------------------------------------------------------- dashboard -- */
+
+export interface DashboardData {
+  group: GroupT;
+  election: ElectionT;
+  parties: PartyT[];
+  viewer: ViewerT;
+  participants: (ParticipantT & { hasSubmitted: boolean })[];
+  myPrediction: PredictionT | null;
+  leaderboard: LeaderRowT[] | null;
+  comparison: {
+    participantId: string;
+    displayName: string;
+    seats: Record<string, number>;
+    answers: Record<string, string | number | boolean>;
+  }[] | null;
+  officialSeats: Record<string, number> | null;
+}
+
+export async function getDashboard(code: string): Promise<DashboardData> {
+  const group = await loadGroup(code);
+  const gT = serializeGroup(group.toObject());
+  const { election, parties } = await getDefaultElection();
+  const viewer = await getViewer(code);
+
+  const participantDocs = await Participant.find({ groupId: group._id })
+    .sort({ createdAt: 1 })
+    .lean();
+  const predDocs = await Prediction.find({ groupId: group._id }).lean();
+  const predByParticipant = new Map(
+    predDocs.map((p) => [String(p.participantId), p]),
+  );
+
+  const participants = participantDocs.map((p) => ({
+    ...serializeParticipant(p),
+    hasSubmitted: Boolean(predByParticipant.get(String(p._id))?.submitted),
+  }));
+
+  const myPrediction = await getMyPrediction(code);
+
+  const canSeeComparison =
+    (gT.locked && gT.settings.revealPredictionsAfterLock) ||
+    (!gT.locked && gT.settings.revealPredictionsBeforeLock);
+
+  let comparison: DashboardData["comparison"] = null;
+  if (canSeeComparison) {
+    comparison = participantDocs.map((p) => {
+      const pred = predByParticipant.get(String(p._id));
+      return {
+        participantId: String(p._id),
+        displayName: p.displayName,
+        seats: mapToObj<number>(pred?.seats),
+        answers: mapToObj<string | number | boolean>(pred?.answers),
+      };
+    });
+  }
+
+  let leaderboard: LeaderRowT[] | null = null;
+  let officialSeats: Record<string, number> | null = null;
+  if (gT.resultsPublishedAt) {
+    const result = await computeLeaderboard(code);
+    leaderboard = result.rows;
+    officialSeats = result.officialSeats;
+  }
+
+  return {
+    group: gT,
+    election,
+    parties,
+    viewer,
+    participants,
+    myPrediction,
+    leaderboard,
+    comparison,
+    officialSeats,
+  };
+}
+
+/* ----------------------------------------------------------------- admin --- */
+
+export async function lockGroup(code: string, lock: boolean): Promise<GroupT> {
+  const group = await requireAdmin(code);
+  group.lockedAt = lock ? new Date() : null;
+  await group.save();
+  return serializeGroup(group.toObject());
+}
+
+export interface QuestionInput {
+  qid: string;
+  type: "party" | "choice" | "boolean" | "number";
+  text: string;
+  textHe: string;
+  options: { value: string; label: string }[];
+  points: number;
+  autoResolve: "" | "largestParty" | "blocWinner" | "partyCount" | "anyPartyBelowThreshold";
+  enabled: boolean;
+  order: number;
+}
+
+export async function updateQuestions(
+  code: string,
+  questions: QuestionInput[],
+): Promise<GroupT> {
+  const group = await requireAdmin(code);
+  const gT = serializeGroup(group.toObject());
+  if (gT.locked) throw new AppError("Cannot edit questions after predictions are locked", 403);
+  group.set(
+    "questions",
+    questions.map((q, i) => ({
+      qid: q.qid || `q_${Date.now()}_${i}`,
+      type: q.type,
+      text: q.text,
+      textHe: q.textHe,
+      options: q.options ?? [],
+      points: Number(q.points) || 0,
+      autoResolve: q.autoResolve ?? "",
+      enabled: q.enabled !== false,
+      order: q.order ?? i + 1,
+    })),
+  );
+  await group.save();
+  return serializeGroup(group.toObject());
+}
+
+export async function updateScoring(
+  code: string,
+  scoring: Partial<ScoringConfig>,
+): Promise<GroupT> {
+  const group = await requireAdmin(code);
+  group.set("scoring", { ...serializeGroup(group.toObject()).scoring, ...scoring });
+  await group.save();
+  return serializeGroup(group.toObject());
+}
+
+export interface ResultsInput {
+  seats: Record<string, number>;
+  answers: Record<string, string | number | boolean>;
+  enteredBy?: string;
+  publish: boolean;
+}
+
+export async function saveResults(code: string, input: ResultsInput): Promise<GroupT> {
+  const group = await requireAdmin(code);
+  const { election, parties } = await getDefaultElection();
+  const partyKeys = new Set(parties.map((p) => p.key));
+
+  const seats: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(input.seats ?? {})) {
+    if (!partyKeys.has(key)) continue;
+    const v = Math.floor(Number(raw));
+    if (!Number.isNaN(v) && v >= 0) seats[key] = v;
+  }
+
+  if (input.publish) {
+    const total = Object.values(seats).reduce((a, b) => a + b, 0);
+    if (total !== election.totalSeats) {
+      throw new AppError(
+        `Official seats must total ${election.totalSeats} to publish (currently ${total})`,
+      );
+    }
+  }
+
+  await OfficialResult.findOneAndUpdate(
+    { groupId: group._id },
+    {
+      $set: {
+        seats,
+        answers: input.answers ?? {},
+        enteredBy: input.enteredBy ?? "",
+      },
+    },
+    { upsert: true },
+  );
+
+  group.resultsPublishedAt = input.publish ? new Date() : null;
+  await group.save();
+  return serializeGroup(group.toObject());
+}
+
+export interface OfficialResultDraft {
+  seats: Record<string, number>;
+  answers: Record<string, string | number | boolean>;
+  enteredBy: string;
+}
+
+export async function getOfficialResultDraft(code: string): Promise<OfficialResultDraft> {
+  const group = await requireAdmin(code);
+  const result = await OfficialResult.findOne({ groupId: group._id }).lean();
+  return {
+    seats: mapToObj<number>(result?.seats),
+    answers: mapToObj<string | number | boolean>(result?.answers),
+    enteredBy: (result?.enteredBy as string) ?? "",
+  };
+}
+
+/* ------------------------------------------------------------- leaderboard -- */
+
+export interface LeaderboardResult {
+  rows: LeaderRowT[];
+  officialSeats: Record<string, number>;
+}
+
+export async function computeLeaderboard(code: string): Promise<LeaderboardResult> {
+  const group = await loadGroup(code);
+  const gT = serializeGroup(group.toObject());
+  const { election, parties } = await getDefaultElection();
+
+  const result = await OfficialResult.findOne({ groupId: group._id }).lean();
+  const officialSeats = mapToObj<number>(result?.seats);
+  const officialAnswers = mapToObj<string | number | boolean>(result?.answers);
+
+  const partyLites: PartyLite[] = parties.map((p) => ({
+    key: p.key,
+    name: p.name,
+    nameHe: p.nameHe,
+    color: p.color,
+    bloc: p.bloc,
+  }));
+  const questionLites: QuestionLite[] = gT.questions.map((q) => ({
+    qid: q.qid,
+    type: q.type,
+    text: q.text,
+    textHe: q.textHe,
+    points: q.points,
+    autoResolve: q.autoResolve,
+    enabled: q.enabled,
+  }));
+  const config: ScoringConfig = gT.scoring;
+
+  const participantDocs = await Participant.find({ groupId: group._id }).lean();
+  const predDocs = await Prediction.find({ groupId: group._id }).lean();
+  const predByParticipant = new Map(predDocs.map((p) => [String(p.participantId), p]));
+
+  const scored = participantDocs.map((p) => {
+    const pred = predByParticipant.get(String(p._id));
+    const s = scoreParticipant({
+      parties: partyLites,
+      questions: questionLites,
+      blocs: election.blocs,
+      config,
+      thresholdSeats: election.thresholdSeats,
+      predictedSeats: mapToObj<number>(pred?.seats),
+      predictedAnswers: mapToObj(pred?.answers),
+      actualSeats: officialSeats,
+      actualAnswers: officialAnswers,
+    });
+    return {
+      participantId: String(p._id),
+      displayName: p.displayName,
+      submitted: Boolean(pred?.submitted),
+      ...s,
+    };
+  });
+
+  // Only rank participants who actually submitted a prediction.
+  const ranked = scored
+    .filter((s) => s.submitted)
+    .sort((a, b) => b.total - a.total || a.avgError - b.avgError);
+
+  const minAvgError = ranked.length ? Math.min(...ranked.map((s) => s.avgError)) : 0;
+  const maxExact = ranked.length ? Math.max(...ranked.map((s) => s.exactCount)) : 0;
+
+  const rows: LeaderRowT[] = ranked.map((s, i) => ({
+    rank: i + 1,
+    participantId: s.participantId,
+    displayName: s.displayName,
+    total: s.total,
+    seatScore: s.seatScore,
+    bonusScore: s.bonusScore,
+    avgError: s.avgError,
+    exactCount: s.exactCount,
+    isFirst: i === 0,
+    isMostAccurate: s.avgError === minAvgError,
+    isMostExact: maxExact > 0 && s.exactCount === maxExact,
+  }));
+
+  return { rows, officialSeats };
+}
+
+/** Preview of what the auto-resolved answers currently look like (admin helper). */
+export async function previewAutoAnswers(
+  code: string,
+  seats: Record<string, number>,
+): Promise<Record<string, string | number | boolean | null>> {
+  const group = await loadGroup(code);
+  const gT = serializeGroup(group.toObject());
+  const { election, parties } = await getDefaultElection();
+  const partyLites: PartyLite[] = parties.map((p) => ({
+    key: p.key,
+    name: p.name,
+    nameHe: p.nameHe,
+    color: p.color,
+    bloc: p.bloc,
+  }));
+  const out: Record<string, string | number | boolean | null> = {};
+  for (const q of gT.questions) {
+    if (!q.autoResolve) continue;
+    out[q.qid] = resolveAutoAnswer(
+      { ...q } as QuestionLite,
+      partyLites,
+      seats,
+      election.thresholdSeats,
+      election.blocs,
+    );
+  }
+  return out;
+}
