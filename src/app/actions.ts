@@ -33,7 +33,7 @@ export interface ActionResult<T = unknown> {
 function fail(err: unknown): ActionResult<never> {
   if (err instanceof AppError) return { ok: false, error: err.message };
   console.error(err);
-  return { ok: false, error: "Something went wrong. Please try again." };
+  return { ok: false, error: "משהו השתבש. נסו שוב." };
 }
 
 function revalidateGroup(code: string) {

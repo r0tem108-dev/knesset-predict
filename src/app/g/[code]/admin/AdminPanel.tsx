@@ -25,6 +25,12 @@ const STATUS_HE: Record<GroupT["status"], string> = {
   final: "תוצאות סופיות",
 };
 
+interface ReentryLink {
+  participantId: string;
+  displayName: string;
+  path: string;
+}
+
 export default function AdminPanel({
   code,
   group,
@@ -34,6 +40,7 @@ export default function AdminPanel({
   participantCount,
   submittedCount,
   resultDraft,
+  reentryLinks,
 }: {
   code: string;
   group: GroupT;
@@ -43,6 +50,7 @@ export default function AdminPanel({
   participantCount: number;
   submittedCount: number;
   resultDraft: OfficialResultDraft;
+  reentryLinks: ReentryLink[];
 }) {
   const [tab, setTab] = useState<Tab>("status");
   const tabs: [Tab, string][] = [
@@ -88,6 +96,7 @@ export default function AdminPanel({
           group={group}
           participantCount={participantCount}
           submittedCount={submittedCount}
+          reentryLinks={reentryLinks}
         />
       )}
       {tab === "parties" && (
@@ -109,11 +118,13 @@ function StatusTab({
   group,
   participantCount,
   submittedCount,
+  reentryLinks,
 }: {
   code: string;
   group: GroupT;
   participantCount: number;
   submittedCount: number;
+  reentryLinks: ReentryLink[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -188,6 +199,59 @@ function StatusTab({
           גם ללא נעילה ידנית, התחזיות ננעלות אוטומטית במועד שנקבע.
         </p>
       </div>
+
+      <ReentryLinksBox links={reentryLinks} />
+    </div>
+  );
+}
+
+function ReentryLinksBox({ links }: { links: ReentryLink[] }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  async function copy(id: string, path: string) {
+    try {
+      await navigator.clipboard.writeText(`${origin}${path}`);
+      setCopied(id);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      /* clipboard blocked */
+    }
+  }
+
+  return (
+    <div className="card p-5 text-sm">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between font-bold"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span>🔑 קישורים אישיים לחזרה ({links.length})</span>
+        <span className="text-muted">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <>
+          <p className="mt-2 text-xs text-muted">
+            אם חבר/ה יצא/ה מהאתר ולא מצליח/ה להיכנס — שלחו לו/ה את הקישור האישי כאן (בוואטסאפ).
+            הוא מחזיר אותו/ה לקבוצה עם התחזית שלו/ה. הקישורים סודיים — אל תפרסמו אותם בקבוצה.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {links.map((l) => (
+              <li key={l.participantId} className="flex items-center justify-between gap-2">
+                <span className="font-bold">{l.displayName}</span>
+                <button
+                  className="btn btn-ghost !py-1 text-xs"
+                  onClick={() => copy(l.participantId, l.path)}
+                  type="button"
+                >
+                  {copied === l.participantId ? "הועתק ✓" : "העתקת קישור"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }

@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AdminPanel from "./AdminPanel";
-import { getDashboard, getOfficialResultDraft, getDefaultElection, AppError } from "@/lib/data";
+import {
+  getDashboard,
+  getOfficialResultDraft,
+  getDefaultElection,
+  getReentryLinks,
+  AppError,
+} from "@/lib/data";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +44,7 @@ export default async function AdminPage({
 
   const draft = await getOfficialResultDraft(code);
   const { allParties } = await getDefaultElection();
+  const reentryLinks = await getReentryLinks(code);
 
   return (
     <div className="space-y-4">
@@ -56,6 +63,7 @@ export default async function AdminPage({
         participantCount={participants.length}
         submittedCount={participants.filter((p) => p.hasSubmitted).length}
         resultDraft={draft}
+        reentryLinks={reentryLinks}
       />
     </div>
   );

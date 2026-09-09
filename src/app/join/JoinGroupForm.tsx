@@ -62,7 +62,15 @@ export default function JoinGroupForm({ initialCode }: { initialCode: string }) 
       </div>
 
       {error && (
-        <p className="rounded-lg bg-bad/10 px-3 py-2 text-sm font-bold text-bad">{error}</p>
+        <div className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
+          <p className="font-bold">{error}</p>
+          {error.includes("תפוס") && (
+            <p className="mt-1 font-normal">
+              אם זה השם שלך מפעם קודמת — אל תיצור/י חדש. בקש/י מהמנהל של הקבוצה לשלוח לך את
+              &quot;הקישור האישי&quot; שלך (הוא מופיע אצלו במסך הניהול).
+            </p>
+          )}
+        </div>
       )}
 
       <button className="btn btn-primary w-full" disabled={busy}>

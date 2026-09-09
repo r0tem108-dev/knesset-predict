@@ -6,14 +6,15 @@ import { cookies } from "next/headers";
  * groups. The group creator additionally holds an admin token cookie.
  */
 
-const ptCookie = (code: string) => `kp_pt_${code.toUpperCase()}`;
-const atCookie = (code: string) => `kp_at_${code.toUpperCase()}`;
+export const ptCookie = (code: string) => `kp_pt_${code.toUpperCase()}`;
+export const atCookie = (code: string) => `kp_at_${code.toUpperCase()}`;
 
-const COOKIE_OPTS = {
+export const COOKIE_OPTS = {
   httpOnly: true,
   sameSite: "lax" as const,
   path: "/",
   maxAge: 60 * 60 * 24 * 365,
+  secure: process.env.NODE_ENV === "production",
 };
 
 export async function getParticipantToken(code: string): Promise<string | null> {

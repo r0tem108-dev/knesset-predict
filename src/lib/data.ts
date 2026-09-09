@@ -116,14 +116,14 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
   await ready();
   const name = input.name?.trim();
   const creatorName = input.creatorName?.trim();
-  if (!name) throw new AppError("Group name is required");
-  if (!creatorName) throw new AppError("Your name is required");
+  if (!name) throw new AppError("צריך להזין שם קבוצה");
+  if (!creatorName) throw new AppError("צריך להזין את השם שלך");
 
   const { election } = await getDefaultElection();
   const deadline = input.predictionDeadline
     ? new Date(input.predictionDeadline)
     : new Date(new Date(election.electionDay).getTime() - 12 * 60 * 60 * 1000);
-  if (Number.isNaN(deadline.getTime())) throw new AppError("Invalid prediction deadline");
+  if (Number.isNaN(deadline.getTime())) throw new AppError("מועד אחרון לא תקין");
 
   const adminToken = newToken();
   const participantToken = newToken();
@@ -149,7 +149,7 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
       throw err;
     }
   }
-  if (!group) throw new AppError("Could not allocate a group code, try again", 500);
+  if (!group) throw new AppError("לא הצלחנו ליצור קוד קבוצה, נסו שוב", 500);
 
   const participant = await Participant.create({
     groupId: group._id,
@@ -165,7 +165,7 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
 async function loadGroup(code: string) {
   await ready();
   const group = await Group.findOne({ code: code.toUpperCase().trim() });
-  if (!group) throw new AppError("Group not found", 404);
+  if (!group) throw new AppError("הקבוצה לא נמצאה", 404);
   return group;
 }
 
@@ -203,14 +203,14 @@ export async function joinGroup(
 
   if (group.passwordHash) {
     const ok = password ? await bcrypt.compare(password, group.passwordHash) : false;
-    if (!ok) throw new AppError("Incorrect group password", 401);
+    if (!ok) throw new AppError("סיסמת הקבוצה שגויה", 401);
   }
 
   const name = displayName?.trim();
-  if (!name) throw new AppError("Display name is required");
+  if (!name) throw new AppError("צריך להזין שם");
 
   const clash = await Participant.findOne({ groupId: group._id, displayName: name });
-  if (clash) throw new AppError("That display name is already taken in this group", 409);
+  if (clash) throw new AppError("השם הזה כבר תפוס בקבוצה", 409);
 
   const token = newToken();
   const participant = await Participant.create({
@@ -248,7 +248,7 @@ async function requireAdmin(code: string) {
   const group = await loadGroup(code);
   const adminToken = await getAdminToken(group.code);
   if (!adminToken || adminToken !== group.adminToken) {
-    throw new AppError("Admin access required", 403);
+    throw new AppError("נדרשת גישת ניהול", 403);
   }
   return group;
 }
@@ -256,9 +256,9 @@ async function requireAdmin(code: string) {
 async function requireParticipant(code: string) {
   const group = await loadGroup(code);
   const token = await getParticipantToken(group.code);
-  if (!token) throw new AppError("Join the group first", 401);
+  if (!token) throw new AppError("צריך להצטרף לקבוצה קודם", 401);
   const participant = await Participant.findOne({ groupId: group._id, token });
-  if (!participant) throw new AppError("Join the group first", 401);
+  if (!participant) throw new AppError("צריך להצטרף לקבוצה קודם", 401);
   return { group, participant };
 }
 
@@ -269,8 +269,8 @@ export async function renameParticipant(
 ): Promise<ParticipantT> {
   const { group, participant } = await requireParticipant(code);
   const name = newName?.trim();
-  if (!name) throw new AppError("Name can't be empty");
-  if (name.length > 40) throw new AppError("Name is too long");
+  if (!name) throw new AppError("השם לא יכול להיות ריק");
+  if (name.length > 40) throw new AppError("השם ארוך מדי");
   if (name === participant.displayName) return serializeParticipant(participant.toObject());
 
   const clash = await Participant.findOne({
@@ -278,7 +278,7 @@ export async function renameParticipant(
     displayName: name,
     _id: { $ne: participant._id },
   });
-  if (clash) throw new AppError("That display name is already taken in this group", 409);
+  if (clash) throw new AppError("השם הזה כבר תפוס בקבוצה", 409);
 
   participant.displayName = name;
   await participant.save();
@@ -293,16 +293,16 @@ export async function adminRenameParticipant(
 ): Promise<ParticipantT> {
   const group = await requireAdmin(code);
   const name = newName?.trim();
-  if (!name) throw new AppError("Name can't be empty");
-  if (name.length > 40) throw new AppError("Name is too long");
+  if (!name) throw new AppError("השם לא יכול להיות ריק");
+  if (name.length > 40) throw new AppError("השם ארוך מדי");
   const participant = await Participant.findOne({ _id: participantId, groupId: group._id });
-  if (!participant) throw new AppError("Participant not found", 404);
+  if (!participant) throw new AppError("המשתתף לא נמצא", 404);
   const clash = await Participant.findOne({
     groupId: group._id,
     displayName: name,
     _id: { $ne: participant._id },
   });
-  if (clash) throw new AppError("That display name is already taken in this group", 409);
+  if (clash) throw new AppError("השם הזה כבר תפוס בקבוצה", 409);
   participant.displayName = name;
   await participant.save();
   return serializeParticipant(participant.toObject());
@@ -337,7 +337,7 @@ export async function savePrediction(
 ): Promise<PredictionT> {
   const { group, participant } = await requireParticipant(code);
   const gT = serializeGroup(group.toObject());
-  if (gT.locked) throw new AppError("Predictions are locked for this group", 403);
+  if (gT.locked) throw new AppError("התחזיות בקבוצה זו נעולות", 403);
 
   const { election, parties } = await getDefaultElection();
   const partyKeys = new Set(parties.map((p) => p.key));
@@ -348,7 +348,7 @@ export async function savePrediction(
     if (!partyKeys.has(key)) continue;
     const v = Math.floor(Number(raw));
     if (Number.isNaN(v) || v < 0 || v > election.totalSeats) {
-      throw new AppError(`Invalid seat value for ${key}`);
+      throw new AppError(`ערך מנדטים לא תקין עבור ${key}`);
     }
     seats[key] = v;
     total += v;
@@ -356,7 +356,7 @@ export async function savePrediction(
 
   if (input.submit && total !== election.totalSeats) {
     throw new AppError(
-      `Seats must total exactly ${election.totalSeats} to submit (currently ${total})`,
+      `צריך לחלק בדיוק ${election.totalSeats} מנדטים כדי לשלוח (כרגע ${total})`,
     );
   }
 
@@ -380,7 +380,7 @@ export async function savePrediction(
     };
   }
   if (input.submit && !confidencePick.partyKey) {
-    throw new AppError("Pick one prediction you're most confident about before submitting");
+    throw new AppError("בחרו ניחוש ביטחון אחד (\u2b50) לפני השליחה");
   }
 
   let wildAnswer: string | number | boolean | null = null;
@@ -428,6 +428,29 @@ export async function savePrediction(
   });
 
   return serializePrediction(pred, String(participant._id));
+}
+
+/** Personal re-entry path for the current viewer (restores their cookie anywhere). */
+export async function getMyReentryPath(code: string): Promise<string | null> {
+  const group = await loadGroup(code);
+  const token = await getParticipantToken(group.code);
+  if (!token) return null;
+  const participant = await Participant.findOne({ groupId: group._id, token });
+  if (!participant) return null;
+  return `/g/${group.code}/enter?t=${token}`;
+}
+
+/** Admin: everyone's re-entry link, so the admin can re-send it to a locked-out friend. */
+export async function getReentryLinks(
+  code: string,
+): Promise<{ participantId: string; displayName: string; path: string }[]> {
+  const group = await requireAdmin(code);
+  const participants = await Participant.find({ groupId: group._id }).sort({ createdAt: 1 }).lean();
+  return participants.map((p) => ({
+    participantId: String(p._id),
+    displayName: p.displayName as string,
+    path: `/g/${group.code}/enter?t=${p.token}`,
+  }));
 }
 
 export async function getMyVersionCount(code: string): Promise<number> {
@@ -861,7 +884,7 @@ export async function updateGroupSettings(
   const group = await requireAdmin(code);
   if (input.predictionDeadline) {
     const d = new Date(input.predictionDeadline);
-    if (Number.isNaN(d.getTime())) throw new AppError("Invalid deadline");
+    if (Number.isNaN(d.getTime())) throw new AppError("מועד אחרון לא תקין");
     group.predictionDeadline = d;
   }
   if (typeof input.showPredictions === "boolean") {
@@ -890,7 +913,7 @@ export async function updateQuestions(
 ): Promise<GroupT> {
   const group = await requireAdmin(code);
   const gT = serializeGroup(group.toObject());
-  if (gT.locked) throw new AppError("Cannot edit questions after predictions are locked", 403);
+  if (gT.locked) throw new AppError("אי אפשר לערוך שאלות אחרי שהתחזיות ננעלו", 403);
   group.set(
     "questions",
     questions.map((q, i) => ({
@@ -919,7 +942,7 @@ export async function updateWildQuestion(
   if (gT.locked && !gT.resultsPublishedAt) {
     // allow editing the correct answer path later, but not the question text after lock
   }
-  if (gT.locked) throw new AppError("Cannot edit the wild question after lock", 403);
+  if (gT.locked) throw new AppError("אי אפשר לערוך את הניחוש הפראי אחרי הנעילה", 403);
   group.set("wildQuestion", {
     enabled: Boolean(wild.enabled),
     text: wild.text ?? wild.textHe,
@@ -957,7 +980,7 @@ export interface PartyInput {
 export async function updateParties(code: string, parties: PartyInput[]): Promise<PartyT[]> {
   const group = await requireAdmin(code);
   const gT = serializeGroup(group.toObject());
-  if (gT.locked) throw new AppError("Cannot edit lists after predictions are locked", 403);
+  if (gT.locked) throw new AppError("אי אפשר לערוך רשימות אחרי שהתחזיות ננעלו", 403);
   const election = await Election.findById(group.electionId);
   if (!election) throw new AppError("Election missing", 500);
 
@@ -1023,7 +1046,7 @@ export async function saveResults(code: string, input: ResultsInput): Promise<Gr
     const total = Object.values(seats).reduce((a, b) => a + b, 0);
     if (total !== election.totalSeats) {
       throw new AppError(
-        `Final results must total ${election.totalSeats} (currently ${total})`,
+        `תוצאות סופיות חייבות להסתכם ל-${election.totalSeats} (כרגע ${total})`,
       );
     }
   }
