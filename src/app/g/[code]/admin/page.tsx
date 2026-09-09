@@ -5,7 +5,7 @@ import {
   getDashboard,
   getOfficialResultDraft,
   getDefaultElection,
-  getReentryLinks,
+  getGroupMembers,
   AppError,
 } from "@/lib/data";
 
@@ -44,7 +44,7 @@ export default async function AdminPage({
 
   const draft = await getOfficialResultDraft(code);
   const { allParties } = await getDefaultElection();
-  const reentryLinks = await getReentryLinks(code);
+  const members = await getGroupMembers(code);
 
   return (
     <div className="space-y-4">
@@ -63,7 +63,7 @@ export default async function AdminPage({
         participantCount={participants.length}
         submittedCount={participants.filter((p) => p.hasSubmitted).length}
         resultDraft={draft}
-        reentryLinks={reentryLinks}
+        members={members}
       />
     </div>
   );

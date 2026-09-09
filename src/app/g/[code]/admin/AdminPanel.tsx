@@ -11,6 +11,7 @@ import {
   updateScoringAction,
   updatePartiesAction,
   saveResultsAction,
+  adminResetPinAction,
 } from "@/app/actions";
 import { resolveAutoAnswer, type QuestionLite, type PartyLite } from "@/lib/scoring";
 import { formatDateTime, toLocalInputValue, fromLocalInputValue } from "@/lib/clientTime";
@@ -25,10 +26,10 @@ const STATUS_HE: Record<GroupT["status"], string> = {
   final: "תוצאות סופיות",
 };
 
-interface ReentryLink {
+interface Member {
   participantId: string;
   displayName: string;
-  path: string;
+  hasPin: boolean;
 }
 
 export default function AdminPanel({
@@ -40,7 +41,7 @@ export default function AdminPanel({
   participantCount,
   submittedCount,
   resultDraft,
-  reentryLinks,
+  members,
 }: {
   code: string;
   group: GroupT;
@@ -50,7 +51,7 @@ export default function AdminPanel({
   participantCount: number;
   submittedCount: number;
   resultDraft: OfficialResultDraft;
-  reentryLinks: ReentryLink[];
+  members: Member[];
 }) {
   const [tab, setTab] = useState<Tab>("status");
   const tabs: [Tab, string][] = [
@@ -96,7 +97,7 @@ export default function AdminPanel({
           group={group}
           participantCount={participantCount}
           submittedCount={submittedCount}
-          reentryLinks={reentryLinks}
+          members={members}
         />
       )}
       {tab === "parties" && (
@@ -118,13 +119,13 @@ function StatusTab({
   group,
   participantCount,
   submittedCount,
-  reentryLinks,
+  members,
 }: {
   code: string;
   group: GroupT;
   participantCount: number;
   submittedCount: number;
-  reentryLinks: ReentryLink[];
+  members: Member[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -200,24 +201,30 @@ function StatusTab({
         </p>
       </div>
 
-      <ReentryLinksBox links={reentryLinks} />
+      <MemberCodesBox code={code} members={members} />
     </div>
   );
 }
 
-function ReentryLinksBox({ links }: { links: ReentryLink[] }) {
+function MemberCodesBox({ code, members }: { code: string; members: Member[] }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  async function copy(id: string, path: string) {
-    try {
-      await navigator.clipboard.writeText(`${origin}${path}`);
-      setCopied(id);
-      setTimeout(() => setCopied(null), 1500);
-    } catch {
-      /* clipboard blocked */
+  async function reset(id: string, name: string) {
+    const pin = window.prompt(`קוד אישי חדש עבור ${name} (לפחות 3 תווים):`);
+    if (!pin) return;
+    setBusyId(id);
+    setMsg(null);
+    const res = await adminResetPinAction(code, id, pin.trim());
+    setBusyId(null);
+    if (!res.ok) {
+      setMsg(res.error ?? "שגיאה");
+      return;
     }
+    setMsg(`הקוד של ${name} עודכן. מסרו לו/ה: "${pin.trim()}"`);
+    router.refresh();
   }
 
   return (
@@ -227,25 +234,32 @@ function ReentryLinksBox({ links }: { links: ReentryLink[] }) {
         className="flex w-full items-center justify-between font-bold"
         onClick={() => setOpen((o) => !o)}
       >
-        <span>🔑 קישורים אישיים לחזרה ({links.length})</span>
+        <span>🔑 איפוס קוד אישי למשתתפ/ת ({members.length})</span>
         <span className="text-muted">{open ? "−" : "+"}</span>
       </button>
       {open && (
         <>
           <p className="mt-2 text-xs text-muted">
-            אם חבר/ה יצא/ה מהאתר ולא מצליח/ה להיכנס — שלחו לו/ה את הקישור האישי כאן (בוואטסאפ).
-            הוא מחזיר אותו/ה לקבוצה עם התחזית שלו/ה. הקישורים סודיים — אל תפרסמו אותם בקבוצה.
+            אם מישהו שכח את הקוד האישי שלו — אפסו אותו כאן, ומִסרו לו/ה את הקוד החדש. הוא/היא
+            ייכנס/תיכנס עם השם שלו/ה + הקוד החדש.
           </p>
+          {msg && (
+            <p className="mt-2 rounded-lg bg-good/10 px-3 py-2 text-xs font-bold text-good">{msg}</p>
+          )}
           <ul className="mt-3 space-y-2">
-            {links.map((l) => (
-              <li key={l.participantId} className="flex items-center justify-between gap-2">
-                <span className="font-bold">{l.displayName}</span>
+            {members.map((m) => (
+              <li key={m.participantId} className="flex items-center justify-between gap-2">
+                <span className="font-bold">
+                  {m.displayName}
+                  {!m.hasPin && <span className="ms-1 text-xs font-normal text-muted">(ללא קוד)</span>}
+                </span>
                 <button
                   className="btn btn-ghost !py-1 text-xs"
-                  onClick={() => copy(l.participantId, l.path)}
+                  onClick={() => reset(m.participantId, m.displayName)}
                   type="button"
+                  disabled={busyId === m.participantId}
                 >
-                  {copied === l.participantId ? "הועתק ✓" : "העתקת קישור"}
+                  איפוס קוד
                 </button>
               </li>
             ))}

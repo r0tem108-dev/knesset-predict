@@ -14,6 +14,7 @@ import {
   saveResults,
   renameParticipant,
   adminRenameParticipant,
+  adminResetPin,
   AppError,
   type CreateGroupInput,
   type SavePredictionInput,
@@ -59,12 +60,33 @@ export async function createGroupAction(
 export async function joinGroupAction(input: {
   code: string;
   displayName: string;
+  pin: string;
   password?: string;
-}): Promise<ActionResult<{ code: string }>> {
+}): Promise<ActionResult<{ code: string; returning: boolean }>> {
   try {
-    const { participantToken } = await joinGroup(input.code, input.displayName, input.password);
+    const { participantToken, returning, adminToken } = await joinGroup(
+      input.code,
+      input.displayName,
+      input.pin,
+      input.password,
+    );
     await setParticipantToken(input.code.toUpperCase(), participantToken);
-    return { ok: true, data: { code: input.code.toUpperCase() } };
+    if (adminToken) await setAdminToken(input.code.toUpperCase(), adminToken);
+    return { ok: true, data: { code: input.code.toUpperCase(), returning } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function adminResetPinAction(
+  code: string,
+  participantId: string,
+  newPin: string,
+): Promise<ActionResult> {
+  try {
+    await adminResetPin(code, participantId, newPin);
+    revalidateGroup(code);
+    return { ok: true };
   } catch (err) {
     return fail(err);
   }

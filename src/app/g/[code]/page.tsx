@@ -7,10 +7,9 @@ import Leaderboard from "@/components/Leaderboard";
 import SeatBars from "@/components/SeatBars";
 import KnessetArc from "@/components/KnessetArc";
 import RenameName from "@/components/RenameName";
-import ReentryLink from "@/components/ReentryLink";
 import ParticipantList from "@/components/ParticipantList";
 import ActivityFeed from "@/components/ActivityFeed";
-import { getDashboard, getMyReentryPath, AppError } from "@/lib/data";
+import { getDashboard, AppError } from "@/lib/data";
 import { formatDateTime } from "@/lib/clientTime";
 import type { GroupStatus } from "@/lib/types";
 
@@ -40,7 +39,6 @@ export default async function GroupDashboard({
     if (err instanceof AppError && err.status === 404) notFound();
     throw err;
   }
-  const myReentryPath = await getMyReentryPath(code);
 
   const {
     group,
@@ -155,11 +153,13 @@ export default async function GroupDashboard({
             </p>
           )}
           {open && (
-            <Link href={`/g/${group.code}/predict`} className="btn btn-ghost mt-3 me-2">
+            <Link href={`/g/${group.code}/predict`} className="btn btn-ghost mt-3">
               {mySubmitted ? "עריכת התחזית" : "המשך למילוי"}
             </Link>
           )}
-          {myReentryPath && <ReentryLink path={myReentryPath} />}
+          <p className="mt-3 text-xs text-muted">
+            כדי לחזור לקבוצה ממכשיר אחר — היכנס שוב עם אותו שם ואותו קוד אישי.
+          </p>
         </section>
       )}
 

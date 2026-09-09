@@ -11,7 +11,7 @@ export default async function JoinPage({
 }) {
   const { code } = await searchParams;
 
-  // Already a member in this browser? Skip straight to the group.
+  // Already identified in this browser? Skip straight to the group.
   if (code) {
     try {
       const viewer = await getViewer(code);
@@ -23,15 +23,15 @@ export default async function JoinPage({
 
   return (
     <div className="mx-auto max-w-md">
-      <h1 className="text-2xl">הצטרפות לקבוצה</h1>
+      <h1 className="text-2xl">כניסה לקבוצה</h1>
       <p className="mt-1 text-sm text-muted">
-        קיבלתם קוד קבוצה או קישור הזמנה מחבר/ה. הזינו את הקוד ואת השם שיוצג בטבלה.
+        חדשים? הזינו שם וקוד אישי. חוזרים ממכשיר אחר? אותו שם ואותו קוד אישי.
       </p>
       <div className="card mt-5 p-6">
         <JoinGroupForm initialCode={code ?? ""} />
       </div>
       <p className="mt-3 text-center text-xs text-muted">
-        כבר הצטרפת בעבר ואי אפשר להיכנס? בקש/י מהמנהל את הקישור האישי שלך.
+        שכחתם את הקוד האישי? בקשו מהמנהל של הקבוצה לאפס אותו.
       </p>
     </div>
   );

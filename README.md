@@ -5,7 +5,7 @@ A private prediction league for a group of friends. Everyone splits **120 Knesse
 seats** between the parties, answers bonus questions, and after the official results
 are entered the app scores everyone and shows a leaderboard.
 
-No money, no accounts — just a group code and a display name.
+No money, no accounts — a group code, a display name and a short personal code you pick (so you can rejoin from any device).
 
 ## Stack
 
@@ -56,7 +56,9 @@ disqualified).
 
 1. **Create a group** (`/create`) — name, deadline, reveal setting. Creator becomes
    admin (cookie token).
-2. Friends **join** (`/join`) with a display name. No accounts.
+2. Friends **join** (`/join`) with a display name + a personal code. Same name+code
+   gets them back in from any browser/device — no cookie needed. Admin can
+   reset a forgotten code.
 3. **Prediction form** (`/g/<code>/predict`): a live 120-seat Knesset arc; per-list
    +/- and direct entry; **0 seats = an explicit "won't cross the threshold"
    call**; one **⭐ Confidence Pick**; bonus questions; turnout tie-breaker; the
@@ -133,5 +135,4 @@ hard-coded party name — a future election is another `Election` row + seed ent
 - Group Insights panel (biggest agreement/disagreement, most optimistic…).
 - Explicit "recompute" button after changing scoring post-publish (currently
   recomputes on next page load).
-- Magic-link re-entry so a cleared cookie doesn't lose your spot.
 - Party logo upload (`logoUrl` field exists, no UI).

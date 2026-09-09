@@ -101,6 +101,8 @@ export async function getDefaultElection(): Promise<ElectionBundle> {
 export interface CreateGroupInput {
   name: string;
   creatorName: string;
+  /** the creator's own personal code, so they can recover their spot + admin */
+  pin: string;
   password?: string;
   predictionDeadline?: string;
   showPredictions?: boolean;
@@ -116,8 +118,10 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
   await ready();
   const name = input.name?.trim();
   const creatorName = input.creatorName?.trim();
+  const pin = (input.pin ?? "").trim();
   if (!name) throw new AppError("צריך להזין שם קבוצה");
   if (!creatorName) throw new AppError("צריך להזין את השם שלך");
+  if (pin.length < 3) throw new AppError("צריך קוד אישי (לפחות 3 תווים) לשחזור הגישה");
 
   const { election } = await getDefaultElection();
   const deadline = input.predictionDeadline
@@ -155,6 +159,7 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
     groupId: group._id,
     displayName: creatorName,
     token: participantToken,
+    pinHash: await bcrypt.hash(pin, 10),
     isAdmin: true,
   });
   await Prediction.create({ groupId: group._id, participantId: participant._id });
@@ -180,26 +185,33 @@ export interface JoinResult {
   participant: ParticipantT;
   participantToken: string;
   alreadyMember: boolean;
+  /** true = we matched an existing name+code and let them back in */
+  returning: boolean;
+  /** set when the returning participant is the group creator — restores admin too */
+  adminToken?: string;
 }
 
+const normPin = (s: string | undefined) => (s ?? "").trim();
+
+/**
+ * One flow for both joining and coming back:
+ *  - name is new  -> create the participant with this personal code
+ *  - name exists, no code yet -> claim it (set the code)
+ *  - name exists, code matches -> log back in
+ *  - name exists, code wrong -> reject
+ */
 export async function joinGroup(
   code: string,
   displayName: string,
+  pin: string,
   password?: string,
 ): Promise<JoinResult> {
   const group = await loadGroup(code);
 
-  const existingToken = await getParticipantToken(group.code);
-  if (existingToken) {
-    const existing = await Participant.findOne({ groupId: group._id, token: existingToken });
-    if (existing) {
-      return {
-        participant: serializeParticipant(existing.toObject()),
-        participantToken: existingToken,
-        alreadyMember: true,
-      };
-    }
-  }
+  // Note: an already-identified browser is redirected straight to the group by
+  // the /join page. Reaching this code means an explicit name + code sign-in,
+  // so we always authenticate against what was typed (lets people switch identity
+  // on a shared device, and lets the creator log back in with their code).
 
   if (group.passwordHash) {
     const ok = password ? await bcrypt.compare(password, group.passwordHash) : false;
@@ -208,15 +220,44 @@ export async function joinGroup(
 
   const name = displayName?.trim();
   if (!name) throw new AppError("צריך להזין שם");
+  const code2 = normPin(pin);
+  if (code2.length < 3) throw new AppError("צריך קוד אישי (לפחות 3 תווים) כדי לחזור בעתיד");
+  if (code2.length > 32) throw new AppError("הקוד האישי ארוך מדי");
 
-  const clash = await Participant.findOne({ groupId: group._id, displayName: name });
-  if (clash) throw new AppError("השם הזה כבר תפוס בקבוצה", 409);
+  const existing = await Participant.findOne({ groupId: group._id, displayName: name });
+
+  if (existing) {
+    if (existing.pinHash) {
+      const ok = await bcrypt.compare(code2, existing.pinHash);
+      if (!ok) {
+        throw new AppError(
+          "השם הזה כבר תפוס והקוד האישי שגוי. אם זה אתם — הזינו את הקוד שבחרתם, או בקשו מהמנהל לאפס אותו.",
+          409,
+        );
+      }
+    } else {
+      // never set a code — first person to claim it with a code wins
+      existing.pinHash = await bcrypt.hash(code2, 10);
+    }
+    // Keep the same token so the person stays logged in on every device they
+    // re-enter from (phone + laptop), rather than kicking the others out.
+    if (!existing.token) existing.token = newToken();
+    await existing.save();
+    return {
+      participant: serializeParticipant(existing.toObject()),
+      participantToken: existing.token,
+      alreadyMember: false,
+      returning: true,
+      adminToken: existing.isAdmin ? (group.adminToken as string) : undefined,
+    };
+  }
 
   const token = newToken();
   const participant = await Participant.create({
     groupId: group._id,
     displayName: name,
     token,
+    pinHash: await bcrypt.hash(code2, 10),
     isAdmin: false,
   });
   await Prediction.create({ groupId: group._id, participantId: participant._id });
@@ -225,7 +266,23 @@ export async function joinGroup(
     participant: serializeParticipant(participant.toObject()),
     participantToken: token,
     alreadyMember: false,
+    returning: false,
   };
+}
+
+/** Admin: set/replace a participant's personal code (for someone who forgot it). */
+export async function adminResetPin(
+  code: string,
+  participantId: string,
+  newPin: string,
+): Promise<void> {
+  const group = await requireAdmin(code);
+  const pin = normPin(newPin);
+  if (pin.length < 3) throw new AppError("קוד אישי חייב להיות לפחות 3 תווים");
+  const participant = await Participant.findOne({ _id: participantId, groupId: group._id });
+  if (!participant) throw new AppError("המשתתף לא נמצא", 404);
+  participant.pinHash = await bcrypt.hash(pin, 10);
+  await participant.save();
 }
 
 /* ----------------------------------------------------------------- viewer -- */
@@ -430,26 +487,16 @@ export async function savePrediction(
   return serializePrediction(pred, String(participant._id));
 }
 
-/** Personal re-entry path for the current viewer (restores their cookie anywhere). */
-export async function getMyReentryPath(code: string): Promise<string | null> {
-  const group = await loadGroup(code);
-  const token = await getParticipantToken(group.code);
-  if (!token) return null;
-  const participant = await Participant.findOne({ groupId: group._id, token });
-  if (!participant) return null;
-  return `/g/${group.code}/enter?t=${token}`;
-}
-
-/** Admin: everyone's re-entry link, so the admin can re-send it to a locked-out friend. */
-export async function getReentryLinks(
+/** Admin: member list for the "reset personal code" helper. */
+export async function getGroupMembers(
   code: string,
-): Promise<{ participantId: string; displayName: string; path: string }[]> {
+): Promise<{ participantId: string; displayName: string; hasPin: boolean }[]> {
   const group = await requireAdmin(code);
   const participants = await Participant.find({ groupId: group._id }).sort({ createdAt: 1 }).lean();
   return participants.map((p) => ({
     participantId: String(p._id),
     displayName: p.displayName as string,
-    path: `/g/${group.code}/enter?t=${p.token}`,
+    hasPin: Boolean(p.pinHash),
   }));
 }
 

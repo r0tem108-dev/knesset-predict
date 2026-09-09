@@ -6,6 +6,12 @@ const ParticipantSchema = new Schema(
     displayName: { type: String, required: true },
     /** Secret stored in the visitor's cookie; identifies them without an account. */
     token: { type: String, required: true, unique: true },
+    /**
+     * Hashed personal code the participant chooses at join time. Lets them get
+     * back into the group from any browser/device with just name + code —
+     * no cookie needed. Empty = never set (can be claimed on first use).
+     */
+    pinHash: { type: String, default: "" },
     /** True for the participant row that belongs to the group creator. */
     isAdmin: { type: Boolean, default: false },
   },

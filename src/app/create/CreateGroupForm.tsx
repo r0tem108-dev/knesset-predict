@@ -15,6 +15,7 @@ export default function CreateGroupForm({
   const router = useRouter();
   const [name, setName] = useState("");
   const [creatorName, setCreatorName] = useState("");
+  const [pin, setPin] = useState("");
   const [password, setPassword] = useState("");
   const [deadline, setDeadline] = useState(toLocalInputValue(defaultDeadlineISO));
   const [revealAfter, setRevealAfter] = useState(true);
@@ -28,6 +29,7 @@ export default function CreateGroupForm({
     const res = await createGroupAction({
       name,
       creatorName,
+      pin,
       password: password || undefined,
       predictionDeadline: deadline ? fromLocalInputValue(deadline) : undefined,
       showPredictions: revealAfter,
@@ -62,6 +64,21 @@ export default function CreateGroupForm({
           placeholder="איך יקראו לך בטבלה"
           required
         />
+      </div>
+
+      <div>
+        <label className="label">קוד אישי שלך</label>
+        <input
+          className="field mt-1"
+          value={pin}
+          onChange={(e) => setPin(e.target.value)}
+          placeholder="4 ספרות או מילה שתזכרו"
+          autoComplete="off"
+          required
+        />
+        <p className="mt-1 text-xs text-muted">
+          עם השם והקוד הזה תוכל לחזור לניהול הקבוצה מכל מכשיר. אל תשכח אותו.
+        </p>
       </div>
 
       <div>

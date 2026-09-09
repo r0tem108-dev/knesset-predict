@@ -8,6 +8,7 @@ export default function JoinGroupForm({ initialCode }: { initialCode: string }) 
   const router = useRouter();
   const [code, setCode] = useState(initialCode.toUpperCase());
   const [displayName, setDisplayName] = useState("");
+  const [pin, setPin] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,6 +20,7 @@ export default function JoinGroupForm({ initialCode }: { initialCode: string }) 
     const res = await joinGroupAction({
       code: code.trim().toUpperCase(),
       displayName,
+      pin,
       password: password || undefined,
     });
     if (!res.ok || !res.data) {
@@ -43,13 +45,29 @@ export default function JoinGroupForm({ initialCode }: { initialCode: string }) 
         />
       </div>
       <div>
-        <label className="label">השם שיוצג בטבלה</label>
+        <label className="label">השם שלך</label>
         <input
           className="field mt-1"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="איך שיוצג בטבלה"
           required
         />
+      </div>
+      <div>
+        <label className="label">קוד אישי</label>
+        <input
+          className="field mt-1"
+          value={pin}
+          onChange={(e) => setPin(e.target.value)}
+          placeholder="4 ספרות או מילה שתזכרו"
+          autoComplete="off"
+          required
+        />
+        <p className="mt-1 text-xs text-muted">
+          תצטרכו את השם והקוד האישי כדי לחזור לקבוצה מכל מכשיר או דפדפן. אם אתם חוזרים —
+          הזינו את אותו שם ואותו קוד.
+        </p>
       </div>
       <div>
         <label className="label">סיסמת קבוצה (אם נדרשת)</label>
@@ -62,19 +80,11 @@ export default function JoinGroupForm({ initialCode }: { initialCode: string }) 
       </div>
 
       {error && (
-        <div className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
-          <p className="font-bold">{error}</p>
-          {error.includes("תפוס") && (
-            <p className="mt-1 font-normal">
-              אם זה השם שלך מפעם קודמת — אל תיצור/י חדש. בקש/י מהמנהל של הקבוצה לשלוח לך את
-              &quot;הקישור האישי&quot; שלך (הוא מופיע אצלו במסך הניהול).
-            </p>
-          )}
-        </div>
+        <p className="rounded-lg bg-bad/10 px-3 py-2 text-sm font-bold text-bad">{error}</p>
       )}
 
       <button className="btn btn-primary w-full" disabled={busy}>
-        {busy ? "מצטרף…" : "הצטרפות"}
+        {busy ? "רגע…" : "כניסה לקבוצה"}
       </button>
     </form>
   );
