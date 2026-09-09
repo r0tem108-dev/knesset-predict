@@ -37,7 +37,12 @@ import {
   type QuestionLite,
   type ScoringConfig,
 } from "./scoring";
-import { getParticipantToken, getAdminToken } from "./session";
+import {
+  getParticipantToken,
+  getAdminToken,
+  getAllParticipantCookies,
+  getAllAdminCookies,
+} from "./session";
 
 export class AppError extends Error {
   status: number;
@@ -172,6 +177,68 @@ async function loadGroup(code: string) {
   const group = await Group.findOne({ code: code.toUpperCase().trim() });
   if (!group) throw new AppError("הקבוצה לא נמצאה", 404);
   return group;
+}
+
+/* ------------------------------------------------------------- my groups -- */
+
+export interface MyGroupT {
+  code: string;
+  name: string;
+  electionNameHe: string;
+  displayName: string;
+  isAdmin: boolean;
+  status: GroupT["status"];
+  hasSubmitted: boolean;
+  lastActivity: string; // ISO — for sorting
+}
+
+/**
+ * Every group this browser is signed into (from its `kp_pt_*` cookies).
+ * Stale/invalid cookies are just skipped.
+ */
+export async function getMyGroups(): Promise<MyGroupT[]> {
+  await ready();
+  const cookiePairs = await getAllParticipantCookies();
+  if (cookiePairs.length === 0) return [];
+  const adminCookies = await getAllAdminCookies();
+
+  const codes = cookiePairs.map((c) => c.code);
+  const groups = await Group.find({ code: { $in: codes } }).lean();
+  const groupByCode = new Map(groups.map((g) => [g.code as string, g]));
+
+  const out: MyGroupT[] = [];
+  for (const { code, token } of cookiePairs) {
+    const group = groupByCode.get(code);
+    if (!group) continue;
+    const participant = await Participant.findOne({ groupId: group._id, token }).lean();
+    if (!participant) continue;
+    const pred = await Prediction.findOne({
+      groupId: group._id,
+      participantId: participant._id,
+    })
+      .select("submitted submittedAt updatedAt")
+      .lean();
+    const gT = serializeGroup(group);
+    out.push({
+      code,
+      name: group.name as string,
+      electionNameHe:
+        (await Election.findById(group.electionId).select("nameHe").lean())?.nameHe ?? "",
+      displayName: participant.displayName as string,
+      isAdmin:
+        Boolean(participant.isAdmin) || adminCookies[code] === (group.adminToken as string),
+      status: gT.status,
+      hasSubmitted: Boolean(pred?.submitted),
+      lastActivity: new Date(
+        (pred?.submittedAt as Date) ??
+          (pred?.updatedAt as Date) ??
+          (participant.createdAt as Date) ??
+          Date.now(),
+      ).toISOString(),
+    });
+  }
+  out.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
+  return out;
 }
 
 export async function getGroup(code: string): Promise<GroupT> {

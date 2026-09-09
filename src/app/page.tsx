@@ -1,14 +1,72 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import Countdown from "@/components/Countdown";
-import { getDefaultElection } from "@/lib/data";
+import { getDefaultElection, getMyGroups, type MyGroupT } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+const STATUS_HE: Record<MyGroupT["status"], string> = {
+  open: "פתוח לתחזיות",
+  locked: "נעול",
+  provisional: "ליל הבחירות",
+  final: "תוצאות סופיות",
+};
+
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ home?: string }>;
+}) {
+  const { home } = await searchParams;
   const { election, parties } = await getDefaultElection();
+  const myGroups = await getMyGroups();
+
+  // One group and not explicitly asking for the home page → go straight in.
+  if (myGroups.length === 1 && home === undefined) {
+    redirect(`/g/${myGroups[0].code}`);
+  }
 
   return (
     <div className="space-y-10">
+      {myGroups.length > 0 && (
+        <section className="card p-6">
+          <h2 className="text-xl">הקבוצות שלי</h2>
+          <ul className="mt-3 space-y-2">
+            {myGroups.map((g) => (
+              <li key={g.code}>
+                <Link
+                  href={`/g/${g.code}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-3 hover:bg-bg"
+                >
+                  <span className="min-w-0">
+                    <span className="font-bold">{g.name}</span>
+                    <span className="text-sm text-muted"> · </span>
+                    <span className="num text-sm text-muted">{g.code}</span>
+                    {g.isAdmin && (
+                      <span className="chip ms-2 bg-brand-100 text-brand-700">מנהל</span>
+                    )}
+                    <span className="block text-xs text-muted">
+                      בתור {g.displayName} · {STATUS_HE[g.status]}
+                      {" · "}
+                      {g.hasSubmitted ? "שלחת תחזית" : "עדיין לא שלחת"}
+                    </span>
+                  </span>
+                  <span className="btn btn-ghost !py-1.5 text-sm">כניסה →</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/create" className="btn btn-outline !py-1.5 text-sm">
+              + קבוצה חדשה
+            </Link>
+            <Link href="/join" className="btn btn-outline !py-1.5 text-sm">
+              הצטרפות לקבוצה נוספת
+            </Link>
+          </div>
+        </section>
+      )}
+
       <section className="card overflow-hidden">
         <div className="relative p-7 sm:p-10">
           <div className="pointer-events-none absolute -left-16 -top-16 h-56 w-56 rounded-full bg-brand-100 blur-2xl" />

@@ -69,7 +69,10 @@ export default async function GroupDashboard({
       <section className="card p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <Link href="/?home=1" className="text-xs text-brand-700">
+              ← הקבוצות שלי
+            </Link>
+            <div className="mt-1 flex items-center gap-2">
               <h1 className="text-2xl">{group.name}</h1>
               <span className={`chip ${chip.cls}`}>{chip.he}</span>
             </div>
