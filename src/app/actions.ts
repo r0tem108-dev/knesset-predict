@@ -12,6 +12,8 @@ import {
   updateScoring,
   updateParties,
   saveResults,
+  renameParticipant,
+  adminRenameParticipant,
   AppError,
   type CreateGroupInput,
   type SavePredictionInput,
@@ -63,6 +65,33 @@ export async function joinGroupAction(input: {
     const { participantToken } = await joinGroup(input.code, input.displayName, input.password);
     await setParticipantToken(input.code.toUpperCase(), participantToken);
     return { ok: true, data: { code: input.code.toUpperCase() } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function renameAction(
+  code: string,
+  newName: string,
+): Promise<ActionResult> {
+  try {
+    const p = await renameParticipant(code, newName);
+    revalidateGroup(code);
+    return { ok: true, data: p };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function adminRenameAction(
+  code: string,
+  participantId: string,
+  newName: string,
+): Promise<ActionResult> {
+  try {
+    const p = await adminRenameParticipant(code, participantId, newName);
+    revalidateGroup(code);
+    return { ok: true, data: p };
   } catch (err) {
     return fail(err);
   }

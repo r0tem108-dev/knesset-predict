@@ -5,6 +5,8 @@ import InviteBox from "@/components/InviteBox";
 import Leaderboard from "@/components/Leaderboard";
 import SeatBars from "@/components/SeatBars";
 import KnessetArc from "@/components/KnessetArc";
+import RenameName from "@/components/RenameName";
+import ParticipantList from "@/components/ParticipantList";
 import { getDashboard, AppError } from "@/lib/data";
 import { formatDateTime } from "@/lib/clientTime";
 import type { GroupStatus } from "@/lib/types";
@@ -136,9 +138,12 @@ export default async function GroupDashboard({
       )}
 
       {/* my status */}
-      {isMember && (
+      {isMember && viewer.participant && (
         <section className="card p-6">
-          <h2 className="text-lg">התחזית שלי</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg">התחזית שלי</h2>
+            <RenameName code={group.code} currentName={viewer.participant.displayName} />
+          </div>
           {mySubmitted ? (
             <p className="mt-1 text-sm text-good">
               ✓ נשלחה
@@ -224,21 +229,7 @@ export default async function GroupDashboard({
             עד הנעילה רואים רק מי הצטרף ומי שלח — לא את התחזיות עצמן.
           </p>
         )}
-        <ul className="mt-3 divide-y divide-line">
-          {participants.map((p) => (
-            <li key={p.id} className="flex items-center justify-between py-2 text-sm">
-              <span className="font-bold">
-                {p.displayName}
-                {p.isAdmin && <span className="chip ms-2 bg-brand-100 text-brand-700">מנהל</span>}
-              </span>
-              {p.hasSubmitted ? (
-                <span className="chip bg-good/10 text-good">✓ שלח/ה</span>
-              ) : (
-                <span className="chip bg-line text-muted">ממתין</span>
-              )}
-            </li>
-          ))}
-        </ul>
+        <ParticipantList code={group.code} participants={participants} canRename={viewer.isAdmin} />
       </section>
     </div>
   );

@@ -262,6 +262,52 @@ async function requireParticipant(code: string) {
   return { group, participant };
 }
 
+/** Rename yourself. Allowed at any stage — it only changes the display label. */
+export async function renameParticipant(
+  code: string,
+  newName: string,
+): Promise<ParticipantT> {
+  const { group, participant } = await requireParticipant(code);
+  const name = newName?.trim();
+  if (!name) throw new AppError("Name can't be empty");
+  if (name.length > 40) throw new AppError("Name is too long");
+  if (name === participant.displayName) return serializeParticipant(participant.toObject());
+
+  const clash = await Participant.findOne({
+    groupId: group._id,
+    displayName: name,
+    _id: { $ne: participant._id },
+  });
+  if (clash) throw new AppError("That display name is already taken in this group", 409);
+
+  participant.displayName = name;
+  await participant.save();
+  return serializeParticipant(participant.toObject());
+}
+
+/** Admin: rename any participant in the group. */
+export async function adminRenameParticipant(
+  code: string,
+  participantId: string,
+  newName: string,
+): Promise<ParticipantT> {
+  const group = await requireAdmin(code);
+  const name = newName?.trim();
+  if (!name) throw new AppError("Name can't be empty");
+  if (name.length > 40) throw new AppError("Name is too long");
+  const participant = await Participant.findOne({ _id: participantId, groupId: group._id });
+  if (!participant) throw new AppError("Participant not found", 404);
+  const clash = await Participant.findOne({
+    groupId: group._id,
+    displayName: name,
+    _id: { $ne: participant._id },
+  });
+  if (clash) throw new AppError("That display name is already taken in this group", 409);
+  participant.displayName = name;
+  await participant.save();
+  return serializeParticipant(participant.toObject());
+}
+
 /* ------------------------------------------------------------- prediction -- */
 
 export async function getMyPrediction(code: string): Promise<PredictionT | null> {
