@@ -103,7 +103,7 @@ export interface CreateGroupInput {
   creatorName: string;
   password?: string;
   predictionDeadline?: string;
-  revealPredictionsAfterLock?: boolean;
+  showPredictions?: boolean;
 }
 
 export interface CreateGroupResult {
@@ -140,7 +140,7 @@ export async function createGroup(input: CreateGroupInput): Promise<CreateGroupR
         adminToken,
         predictionDeadline: deadline,
         settings: {
-          revealPredictionsAfterLock: input.revealPredictionsAfterLock !== false,
+          showPredictions: input.showPredictions !== false,
         },
         questions: defaultQuestions(election.blocs),
       });
@@ -388,10 +388,13 @@ export async function savePrediction(
     wildAnswer = input.wildAnswer as string | number | boolean;
   }
 
-  const nextRevision = ((await Prediction.findOne({
+  const prev = await Prediction.findOne({
     groupId: group._id,
     participantId: participant._id,
-  }).select("revision"))?.revision ?? 0) + 1;
+  }).select("revision submitCount firstSubmittedAt");
+  const nextRevision = (prev?.revision ?? 0) + 1;
+  const now = new Date();
+  const nextSubmitCount = (prev?.submitCount ?? 0) + (input.submit ? 1 : 0);
 
   const pred = await Prediction.findOneAndUpdate(
     { groupId: group._id, participantId: participant._id },
@@ -402,8 +405,11 @@ export async function savePrediction(
         confidencePick,
         wildAnswer,
         submitted: input.submit,
-        submittedAt: input.submit ? new Date() : null,
+        // keep the last-submit time on a post-submit draft save; undefined keys are dropped by Mongoose
+        submittedAt: input.submit ? now : (prev?.submitCount ?? 0) > 0 ? undefined : null,
         revision: nextRevision,
+        submitCount: nextSubmitCount,
+        ...(input.submit && !prev?.firstSubmittedAt ? { firstSubmittedAt: now } : {}),
       },
     },
     { new: true, upsert: true },
@@ -469,6 +475,163 @@ function computeGroupForecast(
   return { seats: floors, averages };
 }
 
+/* ---------------------------------------------------------- group insights -- */
+
+function computeGroupInsights(
+  parties: PartyT[],
+  rows: ComparisonRowT[],
+  forecast: GroupForecastT | null,
+): import("./types").GroupInsightT[] {
+  if (rows.length < 2 || !forecast) return [];
+  const out: import("./types").GroupInsightT[] = [];
+  const name = (k: string) => parties.find((p) => p.key === k)?.nameHe ?? k;
+
+  // consider parties anyone gave a seat to
+  const live = parties.filter((p) => rows.some((r) => (r.seats[p.key] ?? 0) > 0));
+
+  // biggest disagreement / agreement by range
+  let maxRange = -1;
+  let maxKey = "";
+  let minRange = Infinity;
+  let minKey = "";
+  for (const p of live) {
+    const vals = rows.map((r) => r.seats[p.key] ?? 0);
+    const range = Math.max(...vals) - Math.min(...vals);
+    if (range > maxRange) {
+      maxRange = range;
+      maxKey = p.key;
+    }
+    if (range < minRange) {
+      minRange = range;
+      minKey = p.key;
+    }
+  }
+  if (maxKey && maxRange > 0) {
+    const vals = rows.map((r) => r.seats[maxKey] ?? 0);
+    out.push({
+      emoji: "🔥",
+      title: "הכי הרבה מחלוקת",
+      text: `${name(maxKey)} — טווח של ${Math.min(...vals)} עד ${Math.max(...vals)} מנדטים`,
+    });
+  }
+  if (minKey) {
+    const vals = rows.map((r) => r.seats[minKey] ?? 0);
+    out.push({
+      emoji: "🤝",
+      title: "הכי הרבה הסכמה",
+      text:
+        minRange === 0
+          ? `${name(minKey)} — כולם נתנו ${vals[0]}`
+          : `${name(minKey)} — כולם בטווח ${Math.min(...vals)}–${Math.max(...vals)}`,
+    });
+  }
+
+  // optimist / pessimist relative to the group forecast, on the biggest-disagreement party
+  if (maxKey) {
+    const avg = forecast.averages[maxKey] ?? 0;
+    const sorted = [...rows].sort(
+      (a, b) => (b.seats[maxKey] ?? 0) - (a.seats[maxKey] ?? 0),
+    );
+    const top = sorted[0];
+    const bottom = sorted[sorted.length - 1];
+    if (top && (top.seats[maxKey] ?? 0) > avg) {
+      out.push({
+        emoji: "📈",
+        title: "האופטימיסט",
+        text: `${top.displayName} — ${top.seats[maxKey] ?? 0} ל${name(maxKey)} (ממוצע ${avg.toFixed(1)})`,
+      });
+    }
+    if (bottom && (bottom.seats[maxKey] ?? 0) < avg) {
+      out.push({
+        emoji: "📉",
+        title: "הפסימיסט",
+        text: `${bottom.displayName} — ${bottom.seats[maxKey] ?? 0} ל${name(maxKey)} (ממוצע ${avg.toFixed(1)})`,
+      });
+    }
+  }
+
+  // contrarian: map furthest from consensus
+  let farName = "";
+  let farDist = -1;
+  for (const r of rows) {
+    let d = 0;
+    for (const p of parties) d += Math.abs((r.seats[p.key] ?? 0) - (forecast.seats[p.key] ?? 0));
+    if (d > farDist) {
+      farDist = d;
+      farName = r.displayName;
+    }
+  }
+  if (farName && farDist > 0) {
+    out.push({
+      emoji: "🧭",
+      title: "הכי רחוק מהקונצנזוס",
+      text: `${farName} — המפה שלו רחוקה ${farDist} מנדטים מהתחזית הקבוצתית`,
+    });
+  }
+
+  return out;
+}
+
+/* --------------------------------------------------------------- activity -- */
+
+async function buildActivity(
+  groupId: unknown,
+  participantName: Map<string, string>,
+  limit = 8,
+): Promise<import("./types").ActivityItemT[]> {
+  const versions = await PredictionVersion.find({ groupId, submitted: true })
+    .sort({ createdAt: -1 })
+    .limit(60)
+    .lean();
+
+  // group by participant, count today's updates, mark the first-ever submission
+  const seenFirst = new Set<string>();
+  const firstEver = new Map<string, boolean>();
+  const asc = [...versions].reverse();
+  for (const v of asc) {
+    const pid = String(v.participantId);
+    if (!seenFirst.has(pid)) {
+      seenFirst.add(pid);
+      firstEver.set(String(v._id), true);
+    }
+  }
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const items: import("./types").ActivityItemT[] = [];
+  const usedParticipant = new Map<string, number>(); // pid -> item index
+
+  for (const v of versions) {
+    const pid = String(v.participantId);
+    const displayName = participantName.get(pid) ?? "מישהו";
+    const at = (v.createdAt as Date)?.toISOString?.() ?? new Date().toISOString();
+    const isFirst = firstEver.get(String(v._id)) === true;
+
+    if (usedParticipant.has(pid)) {
+      // fold repeat updates into a "multi" item on the most recent one
+      const idx = usedParticipant.get(pid)!;
+      const it = items[idx];
+      if (!isFirst && now - new Date(at).getTime() < dayMs && new Date(it.at).getTime() - new Date(at).getTime() < dayMs) {
+        it.kind = "multi";
+        it.count += 1;
+      }
+      continue;
+    }
+
+    items.push({
+      participantId: pid,
+      displayName,
+      kind: isFirst ? "first" : "update",
+      count: 1,
+      at,
+    });
+    usedParticipant.set(pid, items.length - 1);
+    if (items.length >= limit) break;
+  }
+
+  return items;
+}
+
 /* --------------------------------------------------------------- dashboard -- */
 
 export interface DashboardData {
@@ -476,13 +639,17 @@ export interface DashboardData {
   election: ElectionT;
   parties: PartyT[];
   viewer: ViewerT;
-  participants: (ParticipantT & { hasSubmitted: boolean; revision: number })[];
+  participants: import("./types").DashParticipantT[];
   myPrediction: PredictionT | null;
   myVersionCount: number;
   leaderboard: LeaderRowT[] | null;
   comparison: ComparisonRowT[] | null;
   groupForecast: GroupForecastT | null;
+  groupInsights: import("./types").GroupInsightT[];
+  activity: import("./types").ActivityItemT[];
   officialSeats: Record<string, number> | null;
+  /** true when the viewer is a member and predictions are shown for this group */
+  canSeePredictions: boolean;
 }
 
 export async function getDashboard(code: string): Promise<DashboardData> {
@@ -496,21 +663,34 @@ export async function getDashboard(code: string): Promise<DashboardData> {
     .lean();
   const predDocs = await Prediction.find({ groupId: group._id }).lean();
   const predByParticipant = new Map(predDocs.map((p) => [String(p.participantId), p]));
+  const nameById = new Map(participantDocs.map((p) => [String(p._id), p.displayName]));
 
-  const participants = participantDocs.map((p) => {
+  const lastUpdated = (pr: (typeof predDocs)[number] | undefined): string | null => {
+    if (!pr) return null;
+    const t = (pr.submittedAt as Date) ?? (pr.updatedAt as Date) ?? null;
+    return t ? new Date(t).toISOString() : null;
+  };
+
+  const participants: import("./types").DashParticipantT[] = participantDocs.map((p) => {
     const pred = predByParticipant.get(String(p._id));
     return {
       ...serializeParticipant(p),
       hasSubmitted: Boolean(pred?.submitted),
+      changeCount: Math.max(0, ((pred?.submitCount as number) ?? 0) - 1),
       revision: (pred?.revision as number) ?? 0,
+      lastUpdatedAt: lastUpdated(pred),
+      firstSubmittedAt: pred?.firstSubmittedAt
+        ? new Date(pred.firstSubmittedAt as Date).toISOString()
+        : null,
     };
   });
 
   const myPrediction = await getMyPrediction(code);
   const myVersionCount = await getMyVersionCount(code);
 
-  // Reveal Mode: predictions are visible ONLY after lock, and only if enabled.
-  const revealed = gT.locked && gT.settings.revealPredictionsAfterLock;
+  // Predictions are visible to any MEMBER when the group setting allows it —
+  // both before the deadline (live & editable) and after lock (frozen).
+  const canSeePredictions = Boolean(viewer.participant) && gT.settings.showPredictions;
 
   const submittedPreds = participantDocs
     .map((p) => predByParticipant.get(String(p._id)))
@@ -519,7 +699,10 @@ export async function getDashboard(code: string): Promise<DashboardData> {
 
   let comparison: ComparisonRowT[] | null = null;
   let groupForecast: GroupForecastT | null = null;
-  if (revealed) {
+  let groupInsights: import("./types").GroupInsightT[] = [];
+  let activity: import("./types").ActivityItemT[] = [];
+
+  if (canSeePredictions) {
     comparison = participantDocs
       .filter((p) => predByParticipant.get(String(p._id))?.submitted)
       .map((p) => {
@@ -537,9 +720,16 @@ export async function getDashboard(code: string): Promise<DashboardData> {
           },
           wildAnswer: (pred.wildAnswer as string | number | boolean | null) ?? null,
           totalSeats: Object.values(seats).reduce((a, b) => a + b, 0),
+          lastUpdatedAt: lastUpdated(pred),
+          firstSubmittedAt: pred.firstSubmittedAt
+            ? new Date(pred.firstSubmittedAt as Date).toISOString()
+            : null,
+          changeCount: Math.max(0, ((pred.submitCount as number) ?? 0) - 1),
         };
       });
     groupForecast = computeGroupForecast(parties, submittedPreds, election.totalSeats);
+    groupInsights = computeGroupInsights(parties, comparison, groupForecast);
+    activity = await buildActivity(group._id, nameById);
   }
 
   let leaderboard: LeaderRowT[] | null = null;
@@ -561,7 +751,10 @@ export async function getDashboard(code: string): Promise<DashboardData> {
     leaderboard,
     comparison,
     groupForecast,
+    groupInsights,
+    activity,
     officialSeats,
+    canSeePredictions,
   };
 }
 
@@ -576,7 +769,7 @@ export async function lockGroup(code: string, lock: boolean): Promise<GroupT> {
 
 export async function updateGroupSettings(
   code: string,
-  input: { predictionDeadline?: string; revealPredictionsAfterLock?: boolean },
+  input: { predictionDeadline?: string; showPredictions?: boolean },
 ): Promise<GroupT> {
   const group = await requireAdmin(code);
   if (input.predictionDeadline) {
@@ -584,8 +777,8 @@ export async function updateGroupSettings(
     if (Number.isNaN(d.getTime())) throw new AppError("Invalid deadline");
     group.predictionDeadline = d;
   }
-  if (typeof input.revealPredictionsAfterLock === "boolean") {
-    group.set("settings.revealPredictionsAfterLock", input.revealPredictionsAfterLock);
+  if (typeof input.showPredictions === "boolean") {
+    group.set("settings.showPredictions", input.showPredictions);
   }
   await group.save();
   return serializeGroup(group.toObject());

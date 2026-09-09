@@ -3,29 +3,47 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { adminRenameAction } from "@/app/actions";
-import type { ParticipantT } from "@/lib/types";
+import { relativeTime, formatDateTime } from "@/lib/clientTime";
+import type { DashParticipantT } from "@/lib/types";
 
-type Row = ParticipantT & { hasSubmitted: boolean };
+function changeLabel(n: number): string {
+  if (n <= 0) return "שינויים: 0";
+  if (n >= 7) return `שינויים: ${n} · חושב על זה מחדש 🤔`;
+  if (n >= 4) return `שינויים: ${n} · מפקפק בהכול`;
+  return `שינויים: ${n}`;
+}
 
 export default function ParticipantList({
   code,
   participants,
   canRename,
+  locked,
 }: {
   code: string;
-  participants: Row[];
+  participants: DashParticipantT[];
   canRename: boolean;
+  locked: boolean;
 }) {
   return (
     <ul className="mt-3 divide-y divide-line">
       {participants.map((p) => (
-        <ParticipantRow key={p.id} code={code} p={p} canRename={canRename} />
+        <ParticipantRow key={p.id} code={code} p={p} canRename={canRename} locked={locked} />
       ))}
     </ul>
   );
 }
 
-function ParticipantRow({ code, p, canRename }: { code: string; p: Row; canRename: boolean }) {
+function ParticipantRow({
+  code,
+  p,
+  canRename,
+  locked,
+}: {
+  code: string;
+  p: DashParticipantT;
+  canRename: boolean;
+  locked: boolean;
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(p.displayName);
@@ -50,6 +68,13 @@ function ParticipantRow({ code, p, canRename }: { code: string; p: Row; canRenam
     setEditing(false);
     router.refresh();
   }
+
+  const updated =
+    p.changeCount === 0 && p.firstSubmittedAt
+      ? `${locked ? "ננעל · " : ""}נשלחה ${relativeTime(p.firstSubmittedAt)}`
+      : p.lastUpdatedAt
+        ? `עודכן ${relativeTime(p.lastUpdatedAt)}`
+        : "";
 
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
@@ -82,19 +107,30 @@ function ParticipantRow({ code, p, canRename }: { code: string; p: Row; canRenam
           {err && <span className="font-bold text-bad">{err}</span>}
         </span>
       ) : (
-        <span className="flex items-center gap-2 font-bold">
-          {p.displayName}
-          {p.isAdmin && <span className="chip bg-brand-100 text-brand-700">מנהל</span>}
-          {canRename && (
-            <button
-              className="btn btn-ghost !px-2 !py-0.5 text-xs font-normal"
-              onClick={() => {
-                setName(p.displayName);
-                setEditing(true);
-              }}
+        <span className="min-w-0">
+          <span className="flex items-center gap-2 font-bold">
+            {p.displayName}
+            {p.isAdmin && <span className="chip bg-brand-100 text-brand-700">מנהל</span>}
+            {canRename && (
+              <button
+                className="btn btn-ghost !px-2 !py-0.5 text-xs font-normal"
+                onClick={() => {
+                  setName(p.displayName);
+                  setEditing(true);
+                }}
+              >
+                עריכת שם
+              </button>
+            )}
+          </span>
+          {p.hasSubmitted && (
+            <span
+              className="block text-xs text-muted"
+              title={p.lastUpdatedAt ? formatDateTime(p.lastUpdatedAt) : undefined}
             >
-              עריכת שם
-            </button>
+              {updated}
+              {p.changeCount > 0 && ` · ${changeLabel(p.changeCount)}`}
+            </span>
           )}
         </span>
       )}

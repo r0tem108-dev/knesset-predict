@@ -6,3 +6,6 @@ node_modules
 *.log
 .DS_Store
 next-env.d.ts
+
+# TS incremental build cache
+*.tsbuildinfo

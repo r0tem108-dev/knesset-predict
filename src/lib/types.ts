@@ -74,7 +74,8 @@ export interface ScoringT {
 }
 
 export interface GroupSettingsT {
-  revealPredictionsAfterLock: boolean;
+  /** show members the live predictions / comparison / forecast / insights */
+  showPredictions: boolean;
 }
 
 export type GroupStatus = "open" | "locked" | "provisional" | "final";
@@ -118,8 +119,10 @@ export interface PredictionT {
   wildAnswer: string | number | boolean | null;
   submitted: boolean;
   submittedAt: string | null;
+  firstSubmittedAt: string | null;
   updatedAt: string | null;
   revision: number;
+  changeCount: number;
 }
 
 export interface ViewerT {
@@ -161,6 +164,9 @@ export interface ComparisonRowT {
   confidencePick: ConfidencePickT;
   wildAnswer: string | number | boolean | null;
   totalSeats: number;
+  lastUpdatedAt: string | null;
+  firstSubmittedAt: string | null;
+  changeCount: number;
 }
 
 export interface GroupForecastT {
@@ -168,4 +174,26 @@ export interface GroupForecastT {
   seats: Record<string, number>;
   /** party key -> raw average before rounding */
   averages: Record<string, number>;
+}
+
+export interface GroupInsightT {
+  emoji: string;
+  title: string;
+  text: string;
+}
+
+export interface ActivityItemT {
+  participantId: string;
+  displayName: string;
+  kind: "first" | "update" | "multi";
+  count: number;
+  at: string;
+}
+
+export interface DashParticipantT extends ParticipantT {
+  hasSubmitted: boolean;
+  changeCount: number;
+  revision: number;
+  lastUpdatedAt: string | null;
+  firstSubmittedAt: string | null;
 }

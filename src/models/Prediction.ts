@@ -29,8 +29,13 @@ const PredictionSchema = new Schema(
     wildAnswer: { type: Schema.Types.Mixed, default: null },
     /** False while a draft, true once the participant submitted a valid (=120) prediction. */
     submitted: { type: Boolean, default: false },
+    /** Time of the most recent valid submission (updated on every re-submit). */
     submittedAt: { type: Date, default: null },
-    /** How many times the prediction was saved (see PredictionVersion for the log). */
+    /** Time of the very first valid submission — never overwritten. */
+    firstSubmittedAt: { type: Date, default: null },
+    /** How many valid submissions (changeCount = submitCount - 1). */
+    submitCount: { type: Number, default: 0 },
+    /** How many times the prediction was saved at all (drafts included). */
     revision: { type: Number, default: 0 },
   },
   { timestamps: true },

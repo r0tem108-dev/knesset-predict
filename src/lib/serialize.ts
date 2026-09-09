@@ -120,7 +120,10 @@ export function serializeGroup(g: AnyDoc): GroupT {
     resultsPublishedAt: isoOrNull(g.resultsPublishedAt),
     resultsFinalizedAt: isoOrNull(g.resultsFinalizedAt),
     settings: {
-      revealPredictionsAfterLock: s.revealPredictionsAfterLock !== false,
+      showPredictions:
+        s.showPredictions !== undefined
+          ? s.showPredictions !== false
+          : s.revealPredictionsAfterLock !== false,
     },
     scoring: {
       seatMethod: (sc.seatMethod as "tiered" | "linear") ?? "tiered",
@@ -164,8 +167,10 @@ export function serializePrediction(p: AnyDoc | null, participantId: string): Pr
       wildAnswer: null,
       submitted: false,
       submittedAt: null,
+      firstSubmittedAt: null,
       updatedAt: null,
       revision: 0,
+      changeCount: 0,
     };
   }
   return {
@@ -179,7 +184,9 @@ export function serializePrediction(p: AnyDoc | null, participantId: string): Pr
     wildAnswer: (p.wildAnswer as string | number | boolean | null) ?? null,
     submitted: Boolean(p.submitted),
     submittedAt: isoOrNull(p.submittedAt),
+    firstSubmittedAt: isoOrNull(p.firstSubmittedAt),
     updatedAt: isoOrNull(p.updatedAt),
     revision: (p.revision as number) ?? 0,
+    changeCount: Math.max(0, ((p.submitCount as number) ?? 0) - 1),
   };
 }

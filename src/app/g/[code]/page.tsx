@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import Countdown from "@/components/Countdown";
+import DeadlineBanner from "@/components/DeadlineBanner";
 import InviteBox from "@/components/InviteBox";
 import Leaderboard from "@/components/Leaderboard";
 import SeatBars from "@/components/SeatBars";
 import KnessetArc from "@/components/KnessetArc";
 import RenameName from "@/components/RenameName";
 import ParticipantList from "@/components/ParticipantList";
+import ActivityFeed from "@/components/ActivityFeed";
 import { getDashboard, AppError } from "@/lib/data";
 import { formatDateTime } from "@/lib/clientTime";
 import type { GroupStatus } from "@/lib/types";
@@ -14,8 +16,8 @@ import type { GroupStatus } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 const STATUS_CHIP: Record<GroupStatus, { he: string; cls: string }> = {
-  open: { he: "פתוח לתחזיות", cls: "bg-good/10 text-good" },
-  locked: { he: "תחזיות נעולות", cls: "bg-bad/10 text-bad" },
+  open: { he: "פתוח לתחזיות · עדיין אפשר לשנות", cls: "bg-good/10 text-good" },
+  locked: { he: "🔒 התחזיות נעולות", cls: "bg-bad/10 text-bad" },
   provisional: { he: "🌙 ליל הבחירות · תוצאות ביניים", cls: "bg-accent-400/20 text-accent-500" },
   final: { he: "✔️ תוצאות סופיות", cls: "bg-brand-100 text-brand-700" },
 };
@@ -45,11 +47,13 @@ export default async function GroupDashboard({
     viewer,
     participants,
     myPrediction,
-    myVersionCount,
     leaderboard,
     comparison,
     groupForecast,
+    groupInsights,
+    activity,
     officialSeats,
+    canSeePredictions,
   } = data;
 
   const submittedCount = participants.filter((p) => p.hasSubmitted).length;
@@ -57,6 +61,7 @@ export default async function GroupDashboard({
   const mySubmitted = Boolean(myPrediction?.submitted);
   const chip = STATUS_CHIP[group.status];
   const isFinal = group.status === "final";
+  const open = !group.locked;
 
   return (
     <div className="space-y-6">
@@ -79,7 +84,7 @@ export default async function GroupDashboard({
                 ניהול
               </Link>
             )}
-            {comparison && (
+            {comparison && comparison.length > 0 && (
               <Link href={`/g/${group.code}/compare`} className="btn btn-outline">
                 השוואת תחזיות
               </Link>
@@ -96,7 +101,7 @@ export default async function GroupDashboard({
           </div>
         </div>
 
-        {created === "1" && viewer.isAdmin && (
+        {viewer.isAdmin && (
           <div className="mt-4">
             <InviteBox code={group.code} />
           </div>
@@ -107,35 +112,17 @@ export default async function GroupDashboard({
             <Countdown target={election.electionDay} />
           </div>
           <Stat label="משתתפים" value={String(participants.length)} />
-          <Stat
-            label="שלחו תחזית"
-            value={`${submittedCount} / ${participants.length}`}
-            sub={
-              group.locked ? "התחזיות ננעלו" : `נעילה: ${formatDateTime(group.predictionDeadline)}`
-            }
-          />
+          <Stat label="שלחו תחזית" value={`${submittedCount} / ${participants.length}`} />
         </div>
-
-        {!created && viewer.isAdmin && (
-          <div className="mt-4">
-            <InviteBox code={group.code} />
-          </div>
-        )}
       </section>
 
-      {/* reveal banner */}
-      {group.locked && comparison && (
-        <section className="card border-brand-500 bg-brand-50 p-6">
-          <h2 className="text-lg">🎭 מצב החשיפה פעיל</h2>
-          <p className="mt-1 text-sm text-muted">
-            התחזיות ננעלו וכולן חשופות עכשיו. אפשר לראות מי ניחש מה,{" "}
-            <Link href={`/g/${group.code}/compare`} className="font-bold text-brand-700">
-              בטבלת ההשוואה
-            </Link>
-            .
-          </p>
-        </section>
-      )}
+      {/* deadline / urgency */}
+      <DeadlineBanner
+        code={group.code}
+        deadline={group.predictionDeadline}
+        locked={group.locked}
+        canEdit={isMember && open}
+      />
 
       {/* my status */}
       {isMember && viewer.participant && (
@@ -146,12 +133,14 @@ export default async function GroupDashboard({
           </div>
           {mySubmitted ? (
             <p className="mt-1 text-sm text-good">
-              ✓ נשלחה
-              {myPrediction?.submittedAt ? ` · ${formatDateTime(myPrediction.submittedAt)}` : ""}.
-              {!group.locked && " ניתן לערוך עד מועד הנעילה."}
-              {isFinal && myVersionCount > 1 && (
-                <span className="text-muted"> · שינית את התחזית {myVersionCount} פעמים.</span>
+              ✓{" "}
+              {myPrediction && myPrediction.changeCount === 0
+                ? `נשלחה · ${formatDateTime(myPrediction.firstSubmittedAt ?? myPrediction.submittedAt ?? "")}`
+                : `עודכנה לאחרונה · ${formatDateTime(myPrediction?.submittedAt ?? "")}`}
+              {myPrediction && myPrediction.changeCount > 0 && (
+                <span className="text-muted"> · {myPrediction.changeCount} שינויים</span>
               )}
+              {open && " · ניתן לערוך עד מועד הנעילה."}
             </p>
           ) : (
             <p className="mt-1 text-sm text-muted">
@@ -160,11 +149,18 @@ export default async function GroupDashboard({
                 : `עדיין לא שלחת תחזית תקינה (חלוקה של ${election.totalSeats} מנדטים).`}
             </p>
           )}
-          {!group.locked && (
+          {open && (
             <Link href={`/g/${group.code}/predict`} className="btn btn-ghost mt-3">
               {mySubmitted ? "עריכת התחזית" : "המשך למילוי"}
             </Link>
           )}
+        </section>
+      )}
+
+      {/* not a member — nudge to join */}
+      {!isMember && (
+        <section className="card p-6 text-sm text-muted">
+          הצטרפו לקבוצה כדי לראות את התחזיות של כולם, את תחזית הקבוצה ואת ההשוואות.
         </section>
       )}
 
@@ -187,7 +183,9 @@ export default async function GroupDashboard({
           </div>
           {officialSeats && (
             <div className="mt-6">
-              <h3 className="mb-2 text-sm font-bold text-muted">התוצאות {isFinal ? "הסופיות" : "עד כה"}</h3>
+              <h3 className="mb-2 text-sm font-bold text-muted">
+                התוצאות {isFinal ? "הסופיות" : "עד כה"}
+              </h3>
               <KnessetArc parties={parties} seats={officialSeats} totalSeats={election.totalSeats} />
               <div className="mt-3">
                 <SeatBars parties={parties} values={officialSeats} />
@@ -200,9 +198,15 @@ export default async function GroupDashboard({
       {/* group forecast */}
       {groupForecast && (
         <section className="card p-6">
-          <h2 className="text-lg">📊 תחזית הקבוצה</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg">📊 תחזית הקבוצה</h2>
+            {open && (
+              <span className="chip bg-good/10 text-good">חי · משתנה עם כל עדכון</span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-muted">
-            הממוצע של כל התחזיות שנשלחו — המפה הקולקטיבית של הקבוצה.
+            הממוצע של כל התחזיות שנשלחו — המפה הקולקטיבית של הקבוצה
+            {open && " (מתעדכן בזמן אמת)"}.
           </p>
           <div className="mt-3">
             <KnessetArc
@@ -221,15 +225,52 @@ export default async function GroupDashboard({
         </section>
       )}
 
+      {/* group insights */}
+      {groupInsights.length > 0 && (
+        <section className="card p-6">
+          <h2 className="text-lg">🔎 תובנות מהקבוצה</h2>
+          {open && (
+            <p className="mt-1 text-xs text-muted">משתנה בזמן אמת — התחזיות עדיין פתוחות.</p>
+          )}
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {groupInsights.map((ins, i) => (
+              <div key={i} className="rounded-xl border border-line p-3">
+                <div className="text-xs font-bold text-muted">
+                  {ins.emoji} {ins.title}
+                </div>
+                <div className="mt-0.5 text-sm font-bold">{ins.text}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* recent activity */}
+      {canSeePredictions && activity.length > 0 && (
+        <section className="card p-6">
+          <h2 className="text-lg">⚡ פעילות אחרונה</h2>
+          <div className="mt-3">
+            <ActivityFeed items={activity} />
+          </div>
+        </section>
+      )}
+
       {/* participants */}
       <section className="card p-6">
         <h2 className="text-lg">משתתפים</h2>
-        {!group.locked && (
+        {!canSeePredictions && (
           <p className="mt-1 text-xs text-muted">
-            עד הנעילה רואים רק מי הצטרף ומי שלח — לא את התחזיות עצמן.
+            {isMember
+              ? "מנהל הקבוצה כיבה את הצגת התחזיות."
+              : "הצטרפו כדי לראות תחזיות."}
           </p>
         )}
-        <ParticipantList code={group.code} participants={participants} canRename={viewer.isAdmin} />
+        <ParticipantList
+          code={group.code}
+          participants={participants}
+          canRename={viewer.isAdmin}
+          locked={group.locked}
+        />
       </section>
     </div>
   );

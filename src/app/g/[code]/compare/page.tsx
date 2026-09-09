@@ -20,7 +20,7 @@ export default async function ComparePage({
     throw err;
   }
 
-  const { group, parties, comparison, groupForecast, officialSeats } = data;
+  const { group, parties, comparison, groupForecast, officialSeats, viewer } = data;
 
   return (
     <div className="space-y-4">
@@ -31,11 +31,22 @@ export default async function ComparePage({
         <h1 className="text-2xl">השוואת תחזיות</h1>
       </div>
 
+      {!group.locked ? (
+        <p className="rounded-lg bg-good/10 px-3 py-2 text-sm font-bold text-good">
+          התחזיות עדיין פתוחות — משתתפים יכולים לשנות עד המועד האחרון. מוצגת תמיד הגרסה
+          האחרונה שנשמרה.
+        </p>
+      ) : (
+        <p className="rounded-lg bg-bad/10 px-3 py-2 text-sm font-bold text-bad">
+          🔒 התחזיות נעולות — כל מה שמוצג כאן סופי.
+        </p>
+      )}
+
       {!comparison ? (
         <div className="card p-6 text-sm text-muted">
-          {group.locked
-            ? "מנהל הקבוצה כיבה את אפשרות ההשוואה."
-            : "טבלת ההשוואה תיפתח אוטומטית כשהתחזיות ינעלו (מצב החשיפה)."}
+          {viewer.participant
+            ? "מנהל הקבוצה כיבה את הצגת התחזיות."
+            : "הצטרפו לקבוצה כדי לראות את ההשוואה."}
         </div>
       ) : comparison.length === 0 ? (
         <div className="card p-6 text-sm text-muted">אין תחזיות להצגה.</div>

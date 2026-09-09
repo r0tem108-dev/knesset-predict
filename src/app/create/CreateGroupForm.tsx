@@ -30,7 +30,7 @@ export default function CreateGroupForm({
       creatorName,
       password: password || undefined,
       predictionDeadline: deadline ? fromLocalInputValue(deadline) : undefined,
-      revealPredictionsAfterLock: revealAfter,
+      showPredictions: revealAfter,
     });
     if (!res.ok || !res.data) {
       setError(res.error ?? "שגיאה");
@@ -91,18 +91,18 @@ export default function CreateGroupForm({
 
       <fieldset className="rounded-xl border border-line p-3">
         <legend className="label px-1">חשיפת תחזיות</legend>
-        <p className="py-1 text-xs text-muted">
-          עד הנעילה אף אחד לא רואה תחזיות של אחרים — רק מי הצטרף ומי שלח. עם
-          הנעילה נפתח <b>מצב החשיפה</b>: כל התחזיות נחשפות יחד.
-        </p>
         <label className="flex items-center gap-2 py-1 text-sm">
           <input
             type="checkbox"
             checked={revealAfter}
             onChange={(e) => setRevealAfter(e.target.checked)}
           />
-          לאפשר השוואת תחזיות ותחזית קבוצתית אחרי הנעילה
+          חברי הקבוצה רואים תחזיות, השוואות ותחזית קבוצתית של כולם
         </label>
+        <p className="py-1 text-xs text-muted">
+          התחזיות גלויות לחברי הקבוצה לאורך כל הדרך — גם לפני המועד האחרון (כשעדיין
+          אפשר לשנות) וגם אחרי הנעילה. אפשר לכבות כאן אם רוצים משחק &quot;עיוור&quot;.
+        </p>
       </fieldset>
 
       {error && (

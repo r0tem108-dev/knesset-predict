@@ -101,9 +101,12 @@ const ScoringConfigSchema = new Schema(
 const GroupSettingsSchema = new Schema(
   {
     /**
-     * Show everyone's predictions after lock (Reveal Mode). Predictions are
-     * ALWAYS hidden before lock — that is not configurable.
+     * Show every member the live predictions, comparison, group forecast and
+     * insights — both before the deadline (still editable) and after (locked).
+     * Non-members never see predictions. Default on.
      */
+    showPredictions: { type: Boolean, default: true },
+    /** legacy field, kept so old docs deserialize; superseded by showPredictions */
     revealPredictionsAfterLock: { type: Boolean, default: true },
   },
   { _id: false },

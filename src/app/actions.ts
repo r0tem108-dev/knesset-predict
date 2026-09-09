@@ -122,7 +122,7 @@ export async function lockGroupAction(code: string, lock: boolean): Promise<Acti
 
 export async function updateGroupSettingsAction(
   code: string,
-  input: { predictionDeadline?: string; revealPredictionsAfterLock?: boolean },
+  input: { predictionDeadline?: string; showPredictions?: boolean },
 ): Promise<ActionResult> {
   try {
     const group = await updateGroupSettings(code, input);

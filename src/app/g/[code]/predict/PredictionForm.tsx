@@ -131,8 +131,9 @@ export default function PredictionForm({
 
       <div className="card p-4 text-sm text-muted">
         חלקו בדיוק <b className="text-ink">{totalSeats}</b> מנדטים. רשימה עם{" "}
-        <b className="text-ink">0</b> = ניחוש שהיא <b>לא</b> עוברת את אחוז החסימה. שמרו טיוטה
-        בכל שלב — אפשר לערוך עד {formatDateTime(deadline)}.
+        <b className="text-ink">0</b> = ניחוש שהיא <b>לא</b> עוברת את אחוז החסימה. אפשר לשנות
+        כמה שרוצים עד {formatDateTime(deadline)} — <b className="text-ink">חברי הקבוצה רואים
+        את הגרסה האחרונה שלך</b>.
       </div>
 
       {/* seats */}
@@ -307,21 +308,23 @@ export default function PredictionForm({
             </span>
           </div>
           <div className="flex-1" />
-          <button
-            type="button"
-            className="btn btn-outline"
-            disabled={busy !== null}
-            onClick={() => save(false)}
-          >
-            {busy === "draft" ? "שומר…" : "שמירת טיוטה"}
-          </button>
+          {!alreadySubmitted && (
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={busy !== null}
+              onClick={() => save(false)}
+            >
+              {busy === "draft" ? "שומר…" : "שמירת טיוטה"}
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-primary"
             disabled={!valid || busy !== null}
             onClick={() => setShowSummary(true)}
           >
-            {alreadySubmitted ? "עדכון" : "שליחה"}
+            {alreadySubmitted ? "עדכון התחזית" : "שליחה"}
           </button>
         </div>
       </div>

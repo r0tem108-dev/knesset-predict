@@ -118,7 +118,7 @@ function StatusTab({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [deadline, setDeadline] = useState(toLocalInputValue(group.predictionDeadline));
-  const [reveal, setReveal] = useState(group.settings.revealPredictionsAfterLock);
+  const [reveal, setReveal] = useState(group.settings.showPredictions);
   const [msg, setMsg] = useState<string | null>(null);
 
   async function toggleLock(lock: boolean) {
@@ -132,7 +132,7 @@ function StatusTab({
     setMsg(null);
     const res = await updateGroupSettingsAction(code, {
       predictionDeadline: deadline ? fromLocalInputValue(deadline) : undefined,
-      revealPredictionsAfterLock: reveal,
+      showPredictions: reveal,
     });
     setBusy(false);
     setMsg(res.ok ? "נשמר ✓" : res.error ?? "שגיאה");
@@ -166,7 +166,7 @@ function StatusTab({
             checked={reveal}
             onChange={(e) => setReveal(e.target.checked)}
           />
-          לאפשר חשיפת תחזיות והשוואה אחרי הנעילה (מצב חשיפה)
+          חברי הקבוצה רואים תחזיות, השוואות ותחזית קבוצתית (לפני ואחרי הנעילה)
         </label>
 
         <div className="flex flex-wrap items-center gap-2 pt-1">
