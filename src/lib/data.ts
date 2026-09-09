@@ -442,6 +442,93 @@ export async function getMyVersionCount(code: string): Promise<number> {
   });
 }
 
+/* -------------------------------------------------- one participant's card -- */
+
+export interface ParticipantCardData {
+  group: GroupT;
+  election: ElectionT;
+  parties: PartyT[];
+  viewer: ViewerT;
+  participant: ParticipantT;
+  isMe: boolean;
+  hidden: boolean; // predictions turned off and it isn't your own card
+  submitted: boolean;
+  seats: Record<string, number>;
+  answers: Record<string, string | number | boolean>;
+  confidencePick: { partyKey: string; seats: number };
+  wildAnswer: string | number | boolean | null;
+  totalSeats: number;
+  lastUpdatedAt: string | null;
+  firstSubmittedAt: string | null;
+  changeCount: number;
+  groupForecast: GroupForecastT | null;
+  officialSeats: Record<string, number> | null;
+}
+
+export async function getParticipantCard(
+  code: string,
+  participantId: string,
+): Promise<ParticipantCardData | null> {
+  const group = await loadGroup(code);
+  const gT = serializeGroup(group.toObject());
+  const { election, parties } = await getDefaultElection();
+  const viewer = await getViewer(code);
+
+  const participant = await Participant.findOne({ _id: participantId, groupId: group._id });
+  if (!participant) return null;
+
+  const isMe = viewer.participant?.id === String(participant._id);
+  const canSee = Boolean(viewer.participant) && gT.settings.showPredictions;
+  const hidden = !canSee && !isMe;
+
+  const pred = await Prediction.findOne({
+    groupId: group._id,
+    participantId: participant._id,
+  }).lean();
+  const seats = mapToObj<number>(pred?.seats);
+  const cp = (pred?.confidencePick as Record<string, unknown>) ?? {};
+
+  // group forecast + official results for the "vs" comparison
+  const predDocs = await Prediction.find({ groupId: group._id, submitted: true }).lean();
+  const groupForecast = computeGroupForecast(
+    parties,
+    predDocs.map((p) => ({ seats: mapToObj<number>(p.seats) })),
+    election.totalSeats,
+  );
+  const result = gT.resultsPublishedAt
+    ? await OfficialResult.findOne({ groupId: group._id }).lean()
+    : null;
+
+  const lastUpdated = pred
+    ? (pred.submittedAt as Date) ?? (pred.updatedAt as Date) ?? null
+    : null;
+
+  return {
+    group: gT,
+    election,
+    parties,
+    viewer,
+    participant: serializeParticipant(participant.toObject()),
+    isMe,
+    hidden,
+    submitted: Boolean(pred?.submitted),
+    seats: hidden ? {} : seats,
+    answers: hidden ? {} : mapToObj<string | number | boolean>(pred?.answers),
+    confidencePick: hidden
+      ? { partyKey: "", seats: 0 }
+      : { partyKey: (cp.partyKey as string) ?? "", seats: (cp.seats as number) ?? 0 },
+    wildAnswer: hidden ? null : ((pred?.wildAnswer as string | number | boolean | null) ?? null),
+    totalSeats: Object.values(seats).reduce((a, b) => a + b, 0),
+    lastUpdatedAt: lastUpdated ? new Date(lastUpdated).toISOString() : null,
+    firstSubmittedAt: pred?.firstSubmittedAt
+      ? new Date(pred.firstSubmittedAt as Date).toISOString()
+      : null,
+    changeCount: Math.max(0, ((pred?.submitCount as number) ?? 0) - 1),
+    groupForecast: hidden ? null : groupForecast,
+    officialSeats: result ? mapToObj<number>(result.seats) : null,
+  };
+}
+
 /* --------------------------------------------------------- group forecast -- */
 
 /** Average everyone's submitted predictions, rounded (largest-remainder) to 120. */

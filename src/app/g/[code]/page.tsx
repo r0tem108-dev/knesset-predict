@@ -138,7 +138,10 @@ export default async function GroupDashboard({
                 ? `נשלחה · ${formatDateTime(myPrediction.firstSubmittedAt ?? myPrediction.submittedAt ?? "")}`
                 : `עודכנה לאחרונה · ${formatDateTime(myPrediction?.submittedAt ?? "")}`}
               {myPrediction && myPrediction.changeCount > 0 && (
-                <span className="text-muted"> · {myPrediction.changeCount} שינויים</span>
+                <span className="text-muted">
+                  {" "}
+                  · {myPrediction.changeCount === 1 ? "שינוי אחד" : `${myPrediction.changeCount} שינויים`}
+                </span>
               )}
               {open && " · ניתן לערוך עד מועד הנעילה."}
             </p>
@@ -250,7 +253,7 @@ export default async function GroupDashboard({
         <section className="card p-6">
           <h2 className="text-lg">⚡ פעילות אחרונה</h2>
           <div className="mt-3">
-            <ActivityFeed items={activity} />
+            <ActivityFeed code={group.code} items={activity} canView={canSeePredictions} />
           </div>
         </section>
       )}
@@ -270,7 +273,12 @@ export default async function GroupDashboard({
           participants={participants}
           canRename={viewer.isAdmin}
           locked={group.locked}
+          canView={canSeePredictions}
+          viewerId={viewer.participant?.id}
         />
+        {canSeePredictions && (
+          <p className="mt-2 text-xs text-muted">לחצו על שם כדי לראות את התחזית המלאה.</p>
+        )}
       </section>
     </div>
   );

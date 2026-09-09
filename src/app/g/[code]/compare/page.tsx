@@ -52,6 +52,7 @@ export default async function ComparePage({
         <div className="card p-6 text-sm text-muted">אין תחזיות להצגה.</div>
       ) : (
         <CompareView
+          code={group.code}
           parties={parties}
           comparison={comparison}
           groupForecast={groupForecast}

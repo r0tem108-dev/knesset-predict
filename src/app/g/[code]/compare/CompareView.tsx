@@ -1,14 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import type { PartyT, ComparisonRowT, GroupForecastT } from "@/lib/types";
 
 export default function CompareView({
+  code,
   parties,
   comparison,
   groupForecast,
   officialSeats,
 }: {
+  code: string;
   parties: PartyT[];
   comparison: ComparisonRowT[];
   groupForecast: GroupForecastT | null;
@@ -78,7 +81,12 @@ export default function CompareView({
                 {groupForecast && <th className="p-2">קבוצה</th>}
                 {comparison.map((c) => (
                   <th key={c.participantId} className="p-2">
-                    {c.displayName}
+                    <Link
+                      href={`/g/${code}/p/${c.participantId}`}
+                      className="text-brand-700 hover:underline"
+                    >
+                      {c.displayName}
+                    </Link>
                   </th>
                 ))}
               </tr>

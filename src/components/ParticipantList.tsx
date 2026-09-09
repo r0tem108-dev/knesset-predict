@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { adminRenameAction } from "@/app/actions";
 import { relativeTime, formatDateTime } from "@/lib/clientTime";
 import type { DashParticipantT } from "@/lib/types";
 
 function changeLabel(n: number): string {
-  if (n <= 0) return "שינויים: 0";
-  if (n >= 7) return `שינויים: ${n} · חושב על זה מחדש 🤔`;
-  if (n >= 4) return `שינויים: ${n} · מפקפק בהכול`;
-  return `שינויים: ${n}`;
+  const base = n === 1 ? "שינוי אחד" : `${n} שינויים`;
+  if (n >= 7) return `${base} · חושב על זה מחדש 🤔`;
+  if (n >= 4) return `${base} · מפקפק בהכול`;
+  return base;
 }
 
 export default function ParticipantList({
@@ -18,16 +19,28 @@ export default function ParticipantList({
   participants,
   canRename,
   locked,
+  canView,
+  viewerId,
 }: {
   code: string;
   participants: DashParticipantT[];
   canRename: boolean;
   locked: boolean;
+  /** may open each participant's full prediction card */
+  canView: boolean;
+  viewerId?: string;
 }) {
   return (
     <ul className="mt-3 divide-y divide-line">
       {participants.map((p) => (
-        <ParticipantRow key={p.id} code={code} p={p} canRename={canRename} locked={locked} />
+        <ParticipantRow
+          key={p.id}
+          code={code}
+          p={p}
+          canRename={canRename}
+          locked={locked}
+          linkable={(canView || p.id === viewerId) && p.hasSubmitted}
+        />
       ))}
     </ul>
   );
@@ -38,11 +51,13 @@ function ParticipantRow({
   p,
   canRename,
   locked,
+  linkable,
 }: {
   code: string;
   p: DashParticipantT;
   canRename: boolean;
   locked: boolean;
+  linkable: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -109,7 +124,13 @@ function ParticipantRow({
       ) : (
         <span className="min-w-0">
           <span className="flex items-center gap-2 font-bold">
-            {p.displayName}
+            {linkable ? (
+              <Link href={`/g/${code}/p/${p.id}`} className="text-brand-700 underline-offset-2 hover:underline">
+                {p.displayName}
+              </Link>
+            ) : (
+              p.displayName
+            )}
             {p.isAdmin && <span className="chip bg-brand-100 text-brand-700">מנהל</span>}
             {canRename && (
               <button
