@@ -371,10 +371,15 @@ export async function getViewer(code: string): Promise<ViewerT> {
 async function requireAdmin(code: string) {
   const group = await loadGroup(code);
   const adminToken = await getAdminToken(group.code);
-  if (!adminToken || adminToken !== group.adminToken) {
-    throw new AppError("נדרשת גישת ניהול", 403);
+  if (adminToken && adminToken === group.adminToken) {
+    return group;
   }
-  return group;
+  const token = await getParticipantToken(group.code);
+  if (token) {
+    const p = await Participant.findOne({ groupId: group._id, token }).select("isAdmin").lean();
+    if (p?.isAdmin) return group;
+  }
+  throw new AppError("נדרשת גישת ניהול", 403);
 }
 
 async function requireParticipant(code: string) {
@@ -430,6 +435,22 @@ export async function adminRenameParticipant(
   participant.displayName = name;
   await participant.save();
   return serializeParticipant(participant.toObject());
+}
+
+/** Admin: delete a participant and their predictions from the group. */
+export async function adminDeleteParticipant(
+  code: string,
+  participantId: string,
+): Promise<void> {
+  const group = await requireAdmin(code);
+  const participant = await Participant.findOne({ _id: participantId, groupId: group._id });
+  if (!participant) throw new AppError("המשתתף לא נמצא", 404);
+  if (participant.isAdmin) {
+    throw new AppError("לא ניתן למחוק את מנהל הקבוצה", 400);
+  }
+  await PredictionVersion.deleteMany({ groupId: group._id, participantId: participant._id });
+  await Prediction.deleteMany({ groupId: group._id, participantId: participant._id });
+  await Participant.deleteOne({ _id: participant._id });
 }
 
 /* ------------------------------------------------------------- prediction -- */
@@ -554,16 +575,17 @@ export async function savePrediction(
   return serializePrediction(pred, String(participant._id));
 }
 
-/** Admin: member list for the "reset personal code" helper. */
+/** Admin: member list for the "reset personal code" / management helper. */
 export async function getGroupMembers(
   code: string,
-): Promise<{ participantId: string; displayName: string; hasPin: boolean }[]> {
+): Promise<{ participantId: string; displayName: string; hasPin: boolean; isAdmin: boolean }[]> {
   const group = await requireAdmin(code);
   const participants = await Participant.find({ groupId: group._id }).sort({ createdAt: 1 }).lean();
   return participants.map((p) => ({
     participantId: String(p._id),
     displayName: p.displayName as string,
     hasPin: Boolean(p.pinHash),
+    isAdmin: Boolean(p.isAdmin),
   }));
 }
 
@@ -803,6 +825,7 @@ async function buildActivity(
   participantName: Map<string, string>,
   limit = 8,
 ): Promise<import("./types").ActivityItemT[]> {
+  const participantIdSet = new Set(Array.from(participantName.keys()));
   const versions = await PredictionVersion.find({ groupId, submitted: true })
     .sort({ createdAt: -1 })
     .limit(60)
@@ -814,6 +837,7 @@ async function buildActivity(
   const asc = [...versions].reverse();
   for (const v of asc) {
     const pid = String(v.participantId);
+    if (!participantIdSet.has(pid)) continue;
     if (!seenFirst.has(pid)) {
       seenFirst.add(pid);
       firstEver.set(String(v._id), true);
@@ -827,6 +851,7 @@ async function buildActivity(
 
   for (const v of versions) {
     const pid = String(v.participantId);
+    if (!participantIdSet.has(pid)) continue;
     const displayName = participantName.get(pid) ?? "מישהו";
     const at = (v.createdAt as Date)?.toISOString?.() ?? new Date().toISOString();
     const isFirst = firstEver.get(String(v._id)) === true;

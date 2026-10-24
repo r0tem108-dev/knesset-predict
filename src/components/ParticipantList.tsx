@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { adminRenameAction } from "@/app/actions";
+import { adminRenameAction, adminDeleteParticipantAction } from "@/app/actions";
 import { relativeTime, formatDateTime } from "@/lib/clientTime";
 import type { DashParticipantT } from "@/lib/types";
 
@@ -84,6 +84,21 @@ function ParticipantRow({
     router.refresh();
   }
 
+  async function remove() {
+    if (!window.confirm(`למחוק את "${p.displayName}" ואת התחזית שלו/ה מהקבוצה? פעולה זו אינה הפיכה.`)) {
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const res = await adminDeleteParticipantAction(code, p.id);
+    setBusy(false);
+    if (!res.ok) {
+      setErr(res.error ?? "שגיאה במחיקה");
+      return;
+    }
+    router.refresh();
+  }
+
   const updated =
     p.changeCount === 0 && p.firstSubmittedAt
       ? `${locked ? "ננעל · " : ""}נשלחה ${relativeTime(p.firstSubmittedAt)}`
@@ -133,16 +148,29 @@ function ParticipantRow({
             )}
             {p.isAdmin && <span className="chip bg-brand-100 text-brand-700">מנהל</span>}
             {canRename && (
-              <button
-                className="btn btn-ghost !px-2 !py-0.5 text-xs font-normal"
-                onClick={() => {
-                  setName(p.displayName);
-                  setEditing(true);
-                }}
-              >
-                עריכת שם
-              </button>
+              <>
+                <button
+                  className="btn btn-ghost !px-2 !py-0.5 text-xs font-normal"
+                  disabled={busy}
+                  onClick={() => {
+                    setName(p.displayName);
+                    setEditing(true);
+                  }}
+                >
+                  עריכת שם
+                </button>
+                {!p.isAdmin && (
+                  <button
+                    className="btn btn-ghost !px-2 !py-0.5 text-xs font-normal text-bad hover:bg-bad/10"
+                    disabled={busy}
+                    onClick={remove}
+                  >
+                    מחיקה
+                  </button>
+                )}
+              </>
             )}
+            {err && <span className="text-xs font-bold text-bad">{err}</span>}
           </span>
           {p.hasSubmitted && (
             <span

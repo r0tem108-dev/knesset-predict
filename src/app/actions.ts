@@ -14,6 +14,7 @@ import {
   saveResults,
   renameParticipant,
   adminRenameParticipant,
+  adminDeleteParticipant,
   adminResetPin,
   AppError,
   type CreateGroupInput,
@@ -114,6 +115,19 @@ export async function adminRenameAction(
     const p = await adminRenameParticipant(code, participantId, newName);
     revalidateGroup(code);
     return { ok: true, data: p };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function adminDeleteParticipantAction(
+  code: string,
+  participantId: string,
+): Promise<ActionResult> {
+  try {
+    await adminDeleteParticipant(code, participantId);
+    revalidateGroup(code);
+    return { ok: true };
   } catch (err) {
     return fail(err);
   }

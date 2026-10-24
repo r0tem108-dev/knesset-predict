@@ -12,6 +12,7 @@ import {
   updatePartiesAction,
   saveResultsAction,
   adminResetPinAction,
+  adminDeleteParticipantAction,
 } from "@/app/actions";
 import { resolveAutoAnswer, type QuestionLite, type PartyLite } from "@/lib/scoring";
 import { formatDateTime, toLocalInputValue, fromLocalInputValue } from "@/lib/clientTime";
@@ -30,6 +31,7 @@ interface Member {
   participantId: string;
   displayName: string;
   hasPin: boolean;
+  isAdmin: boolean;
 }
 
 export default function AdminPanel({
@@ -208,7 +210,7 @@ function StatusTab({
 
 function MemberCodesBox({ code, members }: { code: string; members: Member[] }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -227,6 +229,22 @@ function MemberCodesBox({ code, members }: { code: string; members: Member[] }) 
     router.refresh();
   }
 
+  async function remove(id: string, name: string) {
+    if (!window.confirm(`למחוק את "${name}" ואת התחזית שלו/ה מהקבוצה? פעולה זו אינה הפיכה.`)) {
+      return;
+    }
+    setBusyId(id);
+    setMsg(null);
+    const res = await adminDeleteParticipantAction(code, id);
+    setBusyId(null);
+    if (!res.ok) {
+      setMsg(res.error ?? "שגיאה במחיקה");
+      return;
+    }
+    setMsg(`המשתתפ/ת "${name}" נמחק/ה מהקבוצה.`);
+    router.refresh();
+  }
+
   return (
     <div className="card p-5 text-sm">
       <button
@@ -234,14 +252,13 @@ function MemberCodesBox({ code, members }: { code: string; members: Member[] }) 
         className="flex w-full items-center justify-between font-bold"
         onClick={() => setOpen((o) => !o)}
       >
-        <span>🔑 איפוס קוד אישי למשתתפ/ת ({members.length})</span>
+        <span>👥 ניהול משתתפים ואיפוס קוד אישי ({members.length})</span>
         <span className="text-muted">{open ? "−" : "+"}</span>
       </button>
       {open && (
         <>
           <p className="mt-2 text-xs text-muted">
-            אם מישהו שכח את הקוד האישי שלו — אפסו אותו כאן, ומִסרו לו/ה את הקוד החדש. הוא/היא
-            ייכנס/תיכנס עם השם שלו/ה + הקוד החדש.
+            כאן ניתן לאפס קוד אישי למשתתפ/ת ששכח/ה אותו, או להסיר משתתפ/ת מהקבוצה (כולל התחזית שלו/ה).
           </p>
           {msg && (
             <p className="mt-2 rounded-lg bg-good/10 px-3 py-2 text-xs font-bold text-good">{msg}</p>
@@ -251,16 +268,29 @@ function MemberCodesBox({ code, members }: { code: string; members: Member[] }) 
               <li key={m.participantId} className="flex items-center justify-between gap-2">
                 <span className="font-bold">
                   {m.displayName}
+                  {m.isAdmin && <span className="ms-1 chip bg-brand-100 text-brand-700">מנהל</span>}
                   {!m.hasPin && <span className="ms-1 text-xs font-normal text-muted">(ללא קוד)</span>}
                 </span>
-                <button
-                  className="btn btn-ghost !py-1 text-xs"
-                  onClick={() => reset(m.participantId, m.displayName)}
-                  type="button"
-                  disabled={busyId === m.participantId}
-                >
-                  איפוס קוד
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    className="btn btn-ghost !py-1 text-xs"
+                    onClick={() => reset(m.participantId, m.displayName)}
+                    type="button"
+                    disabled={busyId === m.participantId}
+                  >
+                    איפוס קוד
+                  </button>
+                  {!m.isAdmin && (
+                    <button
+                      className="btn btn-ghost !py-1 text-xs text-bad hover:bg-bad/10"
+                      onClick={() => remove(m.participantId, m.displayName)}
+                      type="button"
+                      disabled={busyId === m.participantId}
+                    >
+                      מחיקה
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
