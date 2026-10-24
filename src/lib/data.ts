@@ -495,6 +495,11 @@ export async function savePrediction(
     if (Number.isNaN(v) || v < 0 || v > election.totalSeats) {
       throw new AppError(`ערך מנדטים לא תקין עבור ${key}`);
     }
+    if (v > 0 && v < election.thresholdSeats) {
+      throw new AppError(
+        `לא ניתן להזין פחות מ-${election.thresholdSeats} מנדטים למפלגה (0 או ${election.thresholdSeats}+ בלבד)`,
+      );
+    }
     seats[key] = v;
     total += v;
   }
@@ -706,17 +711,39 @@ function computeGroupForecast(
   const floors: Record<string, number> = {};
   let used = 0;
   for (const p of parties) {
-    floors[p.key] = Math.floor(averages[p.key]);
+    // Only parties averaging >= 2 seats are eligible for seats in the group forecast,
+    // and any party that enters gets at least 4 (thresholdSeats).
+    if (averages[p.key] >= 2) {
+      floors[p.key] = Math.max(4, Math.floor(averages[p.key]));
+    } else {
+      floors[p.key] = 0;
+    }
     used += floors[p.key];
   }
   let remaining = totalSeats - used;
-  const byRemainder = [...parties].sort(
-    (a, b) => (averages[b.key] % 1) - (averages[a.key] % 1),
-  );
-  for (const p of byRemainder) {
-    if (remaining <= 0) break;
-    floors[p.key] += 1;
-    remaining -= 1;
+  const activeParties = parties.filter((p) => floors[p.key] > 0);
+  if (remaining > 0 && activeParties.length > 0) {
+    const byRemainder = [...activeParties].sort(
+      (a, b) => (averages[b.key] % 1) - (averages[a.key] % 1),
+    );
+    let idx = 0;
+    while (remaining > 0) {
+      const p = byRemainder[idx % byRemainder.length];
+      floors[p.key] += 1;
+      remaining -= 1;
+      idx += 1;
+    }
+  } else if (remaining < 0) {
+    // If flooring to 4 pushed total above 120, trim from parties with highest seats or lowest average above 4
+    const bySmallestRemainder = [...activeParties].sort(
+      (a, b) => (averages[a.key] % 1) - (averages[b.key] % 1),
+    );
+    for (const p of bySmallestRemainder) {
+      while (remaining < 0 && floors[p.key] > 4) {
+        floors[p.key] -= 1;
+        remaining += 1;
+      }
+    }
   }
   return { seats: floors, averages };
 }

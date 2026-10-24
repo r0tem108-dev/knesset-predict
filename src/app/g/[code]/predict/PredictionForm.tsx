@@ -56,7 +56,11 @@ export default function PredictionForm({
 
   const total = useMemo(() => Object.values(seats).reduce((a, b) => a + (b || 0), 0), [seats]);
   const remaining = totalSeats - total;
-  const valid = total === totalSeats;
+  const belowThresholdParties = useMemo(
+    () => parties.filter((p) => (seats[p.key] ?? 0) > 0 && (seats[p.key] ?? 0) < thresholdSeats),
+    [parties, seats, thresholdSeats],
+  );
+  const valid = total === totalSeats && belowThresholdParties.length === 0;
 
   function setSeat(key: string, value: number) {
     const v = Math.max(0, Math.min(totalSeats, Math.floor(value || 0)));
@@ -64,7 +68,16 @@ export default function PredictionForm({
     if (v === 0 && confidenceKey === key) setConfidenceKey("");
     setMsg(null);
   }
-  const bump = (key: string, delta: number) => setSeat(key, (seats[key] ?? 0) + delta);
+  const bump = (key: string, delta: number) => {
+    const cur = seats[key] ?? 0;
+    if (delta > 0 && cur < thresholdSeats) {
+      setSeat(key, thresholdSeats);
+    } else if (delta < 0 && cur <= thresholdSeats) {
+      setSeat(key, 0);
+    } else {
+      setSeat(key, cur + delta);
+    }
+  };
 
   const blocTotals = useMemo(() => {
     const t: Record<string, number> = {};
@@ -76,6 +89,13 @@ export default function PredictionForm({
   const listsIn = parties.filter((p) => (seats[p.key] ?? 0) > 0).length;
 
   async function save(submit: boolean) {
+    if (submit && belowThresholdParties.length > 0) {
+      setMsg({
+        kind: "err",
+        text: `לא ניתן לתת פחות מ-${thresholdSeats} מנדטים למפלגה שעוברת את אחוז החסימה (0 או ${thresholdSeats}+ בלבד)`,
+      });
+      return;
+    }
     if (submit && !valid) {
       setMsg({ kind: "err", text: `צריך לחלק בדיוק ${totalSeats} מנדטים` });
       return;
@@ -131,7 +151,8 @@ export default function PredictionForm({
 
       <div className="card p-4 text-sm text-muted">
         חלקו בדיוק <b className="text-ink">{totalSeats}</b> מנדטים. רשימה עם{" "}
-        <b className="text-ink">0</b> = ניחוש שהיא <b>לא</b> עוברת את אחוז החסימה. אפשר לשנות
+        <b className="text-ink">0</b> = ניחוש שהיא <b>לא</b> עוברת את אחוז החסימה (מינימום{" "}
+        <b className="text-ink">{thresholdSeats}</b> מנדטים למפלגה שעוברת). אפשר לשנות
         כמה שרוצים עד {formatDateTime(deadline)} — <b className="text-ink">חברי הקבוצה רואים
         את הגרסה האחרונה שלך</b>.
       </div>
@@ -164,7 +185,12 @@ export default function PredictionForm({
                 <div className="text-xs text-muted">
                   {p.leaderHe || p.name}
                   {!enters && <span className="text-bad"> · לא עוברת</span>}
-                  {near && <span className="text-accent-500"> · קרוב לחסימה</span>}
+                  {near && (
+                    <span className="font-bold text-bad">
+                      {" "}
+                      · מינימום {thresholdSeats} מנדטים (או 0)
+                    </span>
+                  )}
                 </div>
               </div>
               <button
@@ -188,7 +214,9 @@ export default function PredictionForm({
                   −
                 </button>
                 <input
-                  className="field num w-14 !px-1 text-center font-black"
+                  className={`field num w-14 !px-1 text-center font-black ${
+                    near ? "border-bad text-bad" : ""
+                  }`}
                   type="number"
                   inputMode="numeric"
                   min={0}
@@ -196,6 +224,9 @@ export default function PredictionForm({
                   value={v === 0 ? "" : v}
                   placeholder="0"
                   onChange={(e) => setSeat(p.key, Number(e.target.value))}
+                  onBlur={() => {
+                    if (v > 0 && v < thresholdSeats) setSeat(p.key, thresholdSeats);
+                  }}
                 />
                 <button
                   type="button"
