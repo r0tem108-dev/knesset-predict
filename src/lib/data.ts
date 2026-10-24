@@ -583,7 +583,14 @@ export async function savePrediction(
 /** Admin: member list for the "reset personal code" / management helper. */
 export async function getGroupMembers(
   code: string,
-): Promise<{ participantId: string; displayName: string; hasPin: boolean; isAdmin: boolean }[]> {
+): Promise<
+  {
+    participantId: string;
+    displayName: string;
+    hasPin: boolean;
+    isAdmin: boolean;
+  }[]
+> {
   const group = await requireAdmin(code);
   const participants = await Participant.find({ groupId: group._id }).sort({ createdAt: 1 }).lean();
   return participants.map((p) => ({
@@ -592,6 +599,75 @@ export async function getGroupMembers(
     hasPin: Boolean(p.pinHash),
     isAdmin: Boolean(p.isAdmin),
   }));
+}
+
+export interface BelowThresholdCleanupItem {
+  participantId: string;
+  displayName: string;
+  clearedParties: { key: string; nameHe: string; oldSeats: number }[];
+  newTotalSeats: number;
+}
+
+/**
+ * Admin / automatic cleanup: find any prediction in the group with 1..3 seats
+ * for a party, zero those parties out, mark the prediction as unsubmitted
+ * (draft) since its total is no longer 120, and return the affected users.
+ */
+export async function cleanupBelowThresholdPredictions(
+  code: string,
+): Promise<BelowThresholdCleanupItem[]> {
+  const group = await requireAdmin(code);
+  const { election, allParties } = await getDefaultElection();
+  const partyNameByKey = new Map(allParties.map((p) => [p.key, p.nameHe]));
+  const threshold = election.thresholdSeats;
+
+  const participants = await Participant.find({ groupId: group._id }).lean();
+  const nameById = new Map(participants.map((p) => [String(p._id), p.displayName as string]));
+
+  const preds = await Prediction.find({ groupId: group._id });
+  const affected: BelowThresholdCleanupItem[] = [];
+
+  for (const pred of preds) {
+    const seatsObj = mapToObj<number>(pred.seats);
+    const cleared: { key: string; nameHe: string; oldSeats: number }[] = [];
+    let newTotal = 0;
+
+    for (const [k, v] of Object.entries(seatsObj)) {
+      const num = Number(v || 0);
+      if (num > 0 && num < threshold) {
+        cleared.push({
+          key: k,
+          nameHe: partyNameByKey.get(k) ?? k,
+          oldSeats: num,
+        });
+        seatsObj[k] = 0;
+      } else {
+        newTotal += num;
+      }
+    }
+
+    if (cleared.length > 0) {
+      pred.set("seats", seatsObj);
+      if (newTotal !== election.totalSeats) {
+        pred.submitted = false;
+      }
+      // If their confidencePick was on a cleared party, clear it too
+      const cpKey = pred.confidencePick?.partyKey;
+      if (cpKey && seatsObj[cpKey] === 0) {
+        pred.set("confidencePick", { partyKey: "", seats: 0 });
+      }
+      await pred.save();
+
+      affected.push({
+        participantId: String(pred.participantId),
+        displayName: nameById.get(String(pred.participantId)) ?? "לא ידוע",
+        clearedParties: cleared,
+        newTotalSeats: newTotal,
+      });
+    }
+  }
+
+  return affected;
 }
 
 export async function getMyVersionCount(code: string): Promise<number> {

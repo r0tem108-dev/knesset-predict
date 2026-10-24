@@ -16,6 +16,8 @@ import {
   adminRenameParticipant,
   adminDeleteParticipant,
   adminResetPin,
+  cleanupBelowThresholdPredictions,
+  type BelowThresholdCleanupItem,
   AppError,
   type CreateGroupInput,
   type SavePredictionInput,
@@ -128,6 +130,18 @@ export async function adminDeleteParticipantAction(
     await adminDeleteParticipant(code, participantId);
     revalidateGroup(code);
     return { ok: true };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function cleanupBelowThresholdAction(
+  code: string,
+): Promise<ActionResult<BelowThresholdCleanupItem[]>> {
+  try {
+    const affected = await cleanupBelowThresholdPredictions(code);
+    revalidateGroup(code);
+    return { ok: true, data: affected };
   } catch (err) {
     return fail(err);
   }
